@@ -1,0 +1,61 @@
+"""
+Auth module — Pydantic schemas for request/response validation.
+"""
+
+from datetime import datetime
+from typing import Optional
+from uuid import UUID
+
+from pydantic import BaseModel, EmailStr, Field
+
+
+# ── Request Schemas ──────────────────────────────────────
+
+class UserRegister(BaseModel):
+    """Registration request body."""
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=128)
+    display_name: Optional[str] = Field(None, max_length=100)
+
+
+class UserLogin(BaseModel):
+    """Login request body."""
+    email: EmailStr
+    password: str
+
+
+class OTPRequest(BaseModel):
+    """Request OTP for account restore."""
+    email: EmailStr
+
+
+class OTPVerify(BaseModel):
+    """Verify OTP for account restore."""
+    email: EmailStr
+    otp: str = Field(..., min_length=6, max_length=6)
+
+
+# ── Response Schemas ─────────────────────────────────────
+
+class TokenResponse(BaseModel):
+    """JWT token response."""
+    access_token: str
+    token_type: str = "bearer"
+    user_id: UUID
+
+
+class MessageResponse(BaseModel):
+    """Generic message response."""
+    success: bool = True
+    message: str
+
+
+class UserResponse(BaseModel):
+    """Public user data returned after registration."""
+    id: UUID
+    email: str
+    is_active: bool
+    is_verified: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
