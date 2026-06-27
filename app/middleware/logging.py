@@ -4,7 +4,9 @@ Request/response logging middleware — Pure ASGI implementation.
 
 import time
 from starlette.types import ASGIApp, Receive, Scope, Send
-from app.core.logger import logger
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class LoggingMiddleware:

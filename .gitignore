@@ -1,32 +1,16 @@
-# Virtual environment
-venv/
 .venv/
-
-# Environment variables
-.env
-
-# Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-*.egg-info/
-dist/
-build/
-
-# IDE
-.vscode/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
 .idea/
-*.swp
-*.swo
-
-# Uploads
-uploads/
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Alembic
-alembic/versions/__pycache__/
+.vscode/
+*.sqlite
+*.db
+.DS_Store
+.env
+.env.*
+node_modules/

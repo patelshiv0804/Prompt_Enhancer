@@ -1,137 +1,320 @@
-# Prompt Enhancer Backend
+# PromptIQ Backend - Phase 1 Setup
 
-A robust, scalable FastAPI backend for the Prompt Enhancer application, featuring modular architecture, asynchronous PostgreSQL database interactions, JWT-based authentication, and automated testing.
+This repository contains the Phase 1 backend scaffolding for PromptIQ.
 
-## Technologies Used
+## Phase 1 Deliverables
 
-- **Framework**: FastAPI
-- **Language**: Python 3.11+
-- **Database**: PostgreSQL (with `asyncpg`)
-- **ORM**: SQLAlchemy 2.0 (Async)
-- **Migrations**: Alembic
-- **Authentication**: JWT (JSON Web Tokens) with `bcrypt`
-- **Testing**: Pytest with `pytest-asyncio`
-- **Formatting**: Black, Ruff
+1. Project Folder Structure
+2. Python Environment Setup
+3. Dependency Installation
+4. Podman Setup
+5. PostgreSQL Setup
+6. pgAdmin Setup
+7. pgvector Setup
+8. Environment Variables
+9. Database Configuration
+10. Alembic Configuration
+11. Logging Configuration
+12. Exception Handling
+13. Health Endpoint
+14. FastAPI Initialization
+15. Complete Startup Guide
 
-## Project Structure
+---
 
-The project follows a domain-driven, modular architecture:
+## Python Environment Setup
 
+### Python Version
+
+- Python 3.12+
+
+### Create a Virtual Environment
+
+#### Windows
+
+```powershell
+cd C:\Users\karti\Documents\projects\promptIq
+python -m venv .venv
+.\.venv\Scripts\Activate
 ```
-Prompt_Enhancer/
-├── alembic/              # Database migration scripts
-├── app/                  # Main application code
-│   ├── api/              # API router registration
-│   ├── core/             # Core configurations (DB, security, exceptions, logging)
-│   ├── middleware/       # Custom ASGI middleware (rate limit, logging, auth)
-│   └── modules/          # Domain modules (features)
-│       ├── auth/         # Authentication (Register, Login)
-│       └── users/        # Users domain (Module A: Profile, Module B: Settings)
-├── scripts/              # Helper scripts (seed, migrate)
-└── tests/                # Test suite
-    ├── integration/      # Integration tests (API endpoints)
-    └── unit/             # Unit tests (Schema validation)
-```
 
-## Setup Instructions
-
-### 1. Requirements
-
-- Python 3.11+
-- PostgreSQL server running locally or via Docker
-
-### 2. Environment Setup
-
-Create a virtual environment and install dependencies:
+#### Linux / macOS
 
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: .\venv\Scripts\activate
+cd ~/Documents/projects/promptIq
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+### Install Dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-### 3. Configuration
+---
 
-Copy the example environment file and configure it:
+## Dependency Management
 
-```bash
-cp .env.example .env
-```
+All Phase 1 dependencies are declared in `requirements.txt`.
 
-Ensure your PostgreSQL credentials in the `.env` file are correct:
-```env
-DATABASE_URL=postgresql+asyncpg://postgres:admin@localhost:5432/prompt_enhancer
-TEST_DATABASE_URL=postgresql+asyncpg://postgres:admin@localhost:5432/prompt_enhancer_test
-```
+Dependencies and why they are required:
 
-### 4. Database Initialization
+- `fastapi`: FastAPI framework for async web APIs.
+- `uvicorn[standard]`: ASGI server to run FastAPI.
+- `sqlmodel`: ORM layer built on SQLAlchemy and Pydantic.
+- `sqlalchemy`: Core SQL toolkit used by SQLModel and Alembic.
+- `psycopg[binary]`: PostgreSQL driver for SQLAlchemy and Alembic.
+- `asyncpg`: Async PostgreSQL driver for async DB access.
+- `alembic`: Database migration management.
+- `pydantic`: Validation and settings modeling.
+- `pydantic-settings`: Environment-driven settings management.
+- `pgvector`: PostgreSQL vector type support for semantic search.
+- `python-dotenv`: `.env` file loading during local development.
 
-Create the necessary databases and run Alembic migrations to set up the schema:
+---
 
-```bash
-# Create databases (Windows/Powershell)
-python scripts/create_dbs.py
+## Project Initialization Commands
 
-# Run migrations
-python -m alembic upgrade head
-```
-
-Optionally, you can seed the database with a test user (`shiv@gmail.com` / `Test1234!`):
+1. Create project directories (if not already present):
 
 ```bash
-python -m scripts.seed
+mkdir -p app/api/v1 app/core app/db app/schemas alembic/versions
 ```
 
-### 5. Running the Application
-
-Start the development server with live reload:
+2. Create environment file:
 
 ```bash
-uvicorn app.main:app --reload
+copy .env.example .env
 ```
 
-The API will be available at: http://127.0.0.1:8000
-Interactive API Documentation (Swagger UI): http://127.0.0.1:8000/docs
-
-## Running Tests
-
-The application includes a comprehensive test suite covering both unit tests (schemas) and integration tests (APIs).
-
-To run all tests:
+3. Activate the virtual environment:
 
 ```bash
-pytest tests/ -v
+# Windows
+.\.venv\Scripts\Activate
+
+# Linux / macOS
+source .venv/bin/activate
 ```
 
-To run a specific module:
+4. Install dependencies:
 
 ```bash
-pytest tests/integration/test_auth_api.py -v
+pip install -r requirements.txt
 ```
 
-## API Modules Implemented
+5. Start the FastAPI server:
 
-### Authentication
-- `POST /api/v1/auth/register`: Register a new user
-- `POST /api/v1/auth/login`: Login and receive JWT
+```bash
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
 
-### Module A: Profile Management
-- `GET /api/v1/profile/me`: Get current user profile
-- `PATCH /api/v1/profile/me`: Update profile (supports multipart form data for avatars)
-- `DELETE /api/v1/profile/me`: Soft-delete account
-- `POST /api/v1/profile/restore`: Request account restoration (OTP sent)
-- `POST /api/v1/profile/restore/verify`: Verify OTP and restore account
-- `GET /api/v1/profile/plan`: Get user subscription limits
-- `PATCH /api/v1/profile/onboarding`: Update onboarding status
-- `GET /api/v1/profile/stats`: Get user dashboard statistics
-- `GET /api/v1/profile/activity`: Get recent user activity logs
+---
 
-### Module B: User Settings
-- `GET /api/v1/settings`: Get user preferences
-- `PATCH /api/v1/settings`: Bulk update preferences
-- `POST /api/v1/settings/reset`: Reset to defaults
-- `PATCH /api/v1/settings/theme`: Update theme (`light`, `dark`, `system`)
-- `PATCH /api/v1/settings/default-model`: Update default AI model
-- `PATCH /api/v1/settings/default-mode`: Update system mode (e.g. `youtube-shorts`)
-- `PATCH /api/v1/settings/intent-detection`: Toggle intent detection
-- `PATCH /api/v1/settings/diff-view`: Toggle diff view by default
+## Podman Setup
+
+This project uses Podman instead of Docker.
+
+### Create Persistent Volumes
+
+```bash
+podman volume create promptiq_pgdata
+podman volume create promptiq_pgadmin_data
+```
+
+### PostgreSQL Container
+
+```bash
+podman run -d \
+  --name postgres-db \
+  -p 5432:5432 \
+  -v promptiq_pgdata:/var/lib/postgresql/data \
+  -e POSTGRES_DB=promptiq \
+  -e POSTGRES_USER=promptiq_user \
+  -e POSTGRES_PASSWORD=promptiq_pass \
+  docker.io/library/postgres:16
+```
+
+### pgAdmin Container
+
+```bash
+podman run -d \
+  --name pgadmin \
+  -p 5050:80 \
+  -v promptiq_pgadmin_data:/var/lib/pgadmin \
+  -e PGADMIN_DEFAULT_EMAIL=admin@example.com \
+  -e PGADMIN_DEFAULT_PASSWORD=adminpassword \
+  docker.io/dpage/pgadmin4
+```
+
+### How pgAdmin Connects to PostgreSQL
+
+In pgAdmin, register a new server using:
+
+- Host name/address: `localhost`
+- Port: `5432`
+- Maintenance database: `postgres`
+- Username: `promptiq_user`
+- Password: `promptiq_pass`
+
+Because the containers expose ports on the host, pgAdmin can connect over `localhost:5432`.
+
+---
+
+## Podman Verification
+
+Verify running containers:
+
+```bash
+podman ps
+```
+
+Verify port mapping:
+
+```bash
+podman port postgres-db
+podman port pgadmin
+```
+
+Verify PostgreSQL is accessible:
+
+```bash
+podman exec -it postgres-db psql -U promptiq_user -d promptiq -c "SELECT 1;"
+```
+
+Verify pgAdmin is accessible:
+
+Open browser: http://localhost:5050
+
+---
+
+## PostgreSQL Setup
+
+If the environment variables already created the database and user, the following commands are optional.
+
+Enter the PostgreSQL container:
+
+```bash
+podman exec -it postgres-db bash
+psql -U postgres
+```
+
+Create database and user:
+
+```sql
+CREATE USER promptiq_user WITH PASSWORD 'promptiq_pass';
+CREATE DATABASE promptiq OWNER promptiq_user;
+GRANT ALL PRIVILEGES ON DATABASE promptiq TO promptiq_user;
+```
+
+Verify connectivity:
+
+```sql
+\\c promptiq
+SELECT current_database();
+SELECT current_user;
+```
+
+---
+
+## pgvector Installation
+
+Install the extension in the PromptIQ database:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+Verify pgvector exists:
+
+```sql
+SELECT extname FROM pg_extension WHERE extname = 'vector';
+```
+
+Test vector support:
+
+```sql
+SELECT '[1,2,3]'::vector(3) AS vec;
+```
+
+---
+
+## Database Connection Verification
+
+A Python startup verification example is included in `app/db/session.py`.
+
+Example:
+
+```python
+from sqlalchemy import text
+from app.db.session import engine
+
+async def verify_connection() -> bool:
+    async with engine.connect() as conn:
+        await conn.execute(text("SELECT 1"))
+        result = await conn.execute(text("SELECT extname FROM pg_extension WHERE extname = 'vector'"))
+        return result.scalar_one_or_none() == 'vector'
+```
+
+---
+
+## Development Workflow
+
+1. Start Podman containers:
+   - `podman run -d --name postgres-db -p 5432:5432 -v promptiq_pgdata:/var/lib/postgresql/data -e POSTGRES_DB=promptiq -e POSTGRES_USER=promptiq_user -e POSTGRES_PASSWORD=promptiq_pass docker.io/library/postgres:16`
+   - `podman run -d --name pgadmin -p 5050:80 -v promptiq_pgadmin_data:/var/lib/pgadmin -e PGADMIN_DEFAULT_EMAIL=admin@example.com -e PGADMIN_DEFAULT_PASSWORD=adminpassword docker.io/dpage/pgadmin4`
+2. Activate virtual environment.
+3. Install Python dependencies.
+4. Copy `.env.example` to `.env` and update variables.
+5. Run Alembic migrations:
+   - `alembic revision --autogenerate -m "initial schema"`
+   - `alembic upgrade head`
+6. Start FastAPI:
+   - `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
+7. Open Swagger UI:
+   - `http://localhost:8000/docs`
+
+---
+
+## Environment Variables
+
+Add these variables to `.env`:
+
+```text
+DATABASE_URL=postgresql+asyncpg://promptiq_user:promptiq_pass@localhost:5432/promptiq
+```
+
+---
+
+## Alembic Configuration
+
+Alembic is configured to use the application settings from `app.core.config` and to generate migrations from SQLModel metadata.
+
+---
+
+## Logging Configuration
+
+Logging is configured in `app/core/logging.py` using structured log formatting with the standard Python logging system.
+
+---
+
+## Exception Handling
+
+A global exception handler is registered in `app/main.py` to return JSON error responses for unhandled exceptions.
+
+---
+
+## Health Endpoint
+
+The application exposes a health endpoint at:
+
+- `GET /api/v1/health`
+
+It verifies application startup and reports the database status and pgvector extension availability.
+
+---
+
+## FastAPI Initialization
+
+The FastAPI app is initialized in `app/main.py` with router registration and startup events.

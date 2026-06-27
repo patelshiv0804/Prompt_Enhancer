@@ -1,50 +1,74 @@
-"""
-Application configuration loaded from environment variables.
-"""
-
-from pydantic_settings import BaseSettings
-from functools import lru_cache
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from .env file."""
+    database_url: str
+    pgvector_extension: str = "vector"
+    llm_provider: str = "mistral"
+    mistral_api_key: str = ""
+    mistral_model: str = "mistral-mini"
+    mistral_timeout: float = 30.0
+    embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+    top_k_results: int = 5
+    similarity_threshold: float = 0.65
 
-    # ── App ──────────────────────────────────────────────
-    APP_NAME: str = "Prompt Enhancer"
-    APP_VERSION: str = "1.0.0"
-    DEBUG: bool = False
+    # JWT Authentication Config
+    secret_key: str = "supersecretkey_change_me_in_production"
+    algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60
 
-    # ── Database ─────────────────────────────────────────
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/prompt_enhancer"
-    TEST_DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/prompt_enhancer_test"
+    # SMTP & OTP Config
+    smtp_user: str = ""
+    smtp_password: str = ""
+    from_email: str = "noreply@promptiq.com"
+    otp_expire_minutes: int = 15
+    smtp_host: str = "localhost"
+    smtp_port: int = 587
 
-    # ── JWT Auth ─────────────────────────────────────────
-    SECRET_KEY: str = "super-secret-key-change-in-production-please"
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    @property
+    def SMTP_USER(self) -> str:
+        return self.smtp_user
 
-    # ── Email / SMTP ─────────────────────────────────────
-    SMTP_HOST: str = "smtp.gmail.com"
-    SMTP_PORT: int = 587
-    SMTP_USER: str = ""
-    SMTP_PASSWORD: str = ""
-    FROM_EMAIL: str = "noreply@promptenhancer.com"
+    @property
+    def SMTP_PASSWORD(self) -> str:
+        return self.smtp_password
 
-    # ── OTP ──────────────────────────────────────────────
-    OTP_EXPIRE_MINUTES: int = 10
+    @property
+    def FROM_EMAIL(self) -> str:
+        return self.from_email
 
-    # ── File Uploads ─────────────────────────────────────
-    UPLOAD_DIR: str = "uploads"
-    MAX_UPLOAD_SIZE_MB: int = 5
+    @property
+    def OTP_EXPIRE_MINUTES(self) -> int:
+        return self.otp_expire_minutes
 
-    model_config = {
-        "env_file": ".env",
-        "env_file_encoding": "utf-8",
-        "case_sensitive": True,
-    }
+    @property
+    def SMTP_HOST(self) -> str:
+        return self.smtp_host
+
+    @property
+    def SMTP_PORT(self) -> int:
+        return self.smtp_port
+
+    # Map settings for jose library case sensitivity
+    @property
+    def SECRET_KEY(self) -> str:
+        return self.secret_key
+
+    @property
+    def ALGORITHM(self) -> str:
+        return self.algorithm
+
+    @property
+    def ACCESS_TOKEN_EXPIRE_MINUTES(self) -> int:
+        return self.access_token_expire_minutes
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+    )
 
 
-@lru_cache()
+settings = Settings()
+
 def get_settings() -> Settings:
-    """Cached settings instance — reads .env once."""
-    return Settings()
+    return settings

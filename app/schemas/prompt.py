@@ -1,0 +1,64 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import List, Optional
+from uuid import UUID
+
+from pydantic import BaseModel, Field
+
+from .enums import PromptGrade
+from .prompt_version import PromptVersionSummary
+from .template import TemplateSummary
+from .ai_model import AIModelSummary
+
+
+class PromptBase(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=255)
+    original_prompt: str = Field(..., min_length=1)
+    template_id: Optional[UUID] = None
+    ai_model_id: Optional[UUID] = None
+    current_version_id: Optional[UUID] = None
+
+
+class PromptCreate(PromptBase):
+    original_prompt: str = Field(..., min_length=1)
+
+
+class PromptUpdate(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=255)
+    original_prompt: Optional[str] = Field(default=None, min_length=1)
+    template_id: Optional[UUID] = None
+    ai_model_id: Optional[UUID] = None
+    current_version_id: Optional[UUID] = None
+    total_score: Optional[float] = Field(default=None, ge=0)
+    grade: Optional[PromptGrade] = None
+
+
+class PromptSummary(BaseModel):
+    id: UUID
+    title: Optional[str] = None
+    template_id: Optional[UUID] = None
+    ai_model_id: Optional[UUID] = None
+    current_version_id: Optional[UUID] = None
+    total_score: Optional[float] = None
+    grade: Optional[PromptGrade] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class PromptRead(PromptSummary):
+    original_prompt: str
+
+
+class PromptDetailResponse(BaseModel):
+    id: UUID
+    title: Optional[str] = None
+    original_prompt: str
+    template: Optional[TemplateSummary] = None
+    ai_model: Optional[AIModelSummary] = None
+    current_version: Optional[PromptVersionSummary] = None
+    version_count: int = Field(default=0, ge=0)
+    total_score: Optional[float] = None
+    grade: Optional[PromptGrade] = None
+    created_at: datetime
+    updated_at: datetime

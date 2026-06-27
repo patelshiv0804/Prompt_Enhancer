@@ -1,111 +1,70 @@
-"""
-Custom exception classes and FastAPI exception handlers.
-"""
-
-from fastapi import HTTPException, Request, status
+from fastapi import Request
 from fastapi.responses import JSONResponse
 
 
-# ── Custom Exceptions ────────────────────────────────────
-
-class AppException(Exception):
-    """Base exception for all application errors."""
-
-    def __init__(self, message: str, status_code: int = 500):
+class AlreadyExistsException(Exception):
+    def __init__(self, message: str = "Resource already exists"):
         self.message = message
-        self.status_code = status_code
         super().__init__(self.message)
 
 
-class NotFoundException(AppException):
-    """Resource not found."""
+class InvalidOTPException(Exception):
+    def __init__(self, message: str = "Invalid or expired OTP"):
+        self.message = message
+        super().__init__(self.message)
 
-    def __init__(self, resource: str = "Resource"):
-        super().__init__(
-            message=f"{resource} not found",
-            status_code=status.HTTP_404_NOT_FOUND,
+
+class NotFoundException(Exception):
+    def __init__(self, message: str = "Resource not found"):
+        self.message = message
+        super().__init__(self.message)
+
+
+class UnauthorizedException(Exception):
+    def __init__(self, message: str = "Unauthorized access"):
+        self.message = message
+        super().__init__(self.message)
+
+
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+async def http_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    if isinstance(exc, StarletteHTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
         )
-
-
-class AlreadyExistsException(AppException):
-    """Resource already exists."""
-
-    def __init__(self, resource: str = "Resource"):
-        super().__init__(
-            message=f"{resource} already exists",
-            status_code=status.HTTP_409_CONFLICT,
+    if isinstance(exc, RequestValidationError):
+        return JSONResponse(
+            status_code=422,
+            content={"detail": exc.errors()},
         )
-
-
-class UnauthorizedException(AppException):
-    """Authentication required or failed."""
-
-    def __init__(self, message: str = "Not authenticated"):
-        super().__init__(
-            message=message,
-            status_code=status.HTTP_401_UNAUTHORIZED,
+    if isinstance(exc, AlreadyExistsException):
+        return JSONResponse(
+            status_code=400,
+            content={"detail": exc.message},
         )
-
-
-class ForbiddenException(AppException):
-    """Insufficient permissions."""
-
-    def __init__(self, message: str = "Forbidden"):
-        super().__init__(
-            message=message,
-            status_code=status.HTTP_403_FORBIDDEN,
+    if isinstance(exc, InvalidOTPException):
+        return JSONResponse(
+            status_code=400,
+            content={"detail": exc.message},
         )
-
-
-class ValidationException(AppException):
-    """Input validation failed."""
-
-    def __init__(self, message: str = "Validation error"):
-        super().__init__(
-            message=message,
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+    if isinstance(exc, NotFoundException):
+        return JSONResponse(
+            status_code=404,
+            content={"detail": exc.message},
         )
-
-
-class AccountDeletedException(AppException):
-    """Account has been soft-deleted."""
-
-    def __init__(self):
-        super().__init__(
-            message="Account has been deleted. Use the restore endpoint to recover it.",
-            status_code=status.HTTP_403_FORBIDDEN,
+    if isinstance(exc, UnauthorizedException):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": exc.message},
         )
-
-
-class InvalidOTPException(AppException):
-    """OTP is invalid or expired."""
-
-    def __init__(self):
-        super().__init__(
-            message="Invalid or expired OTP",
-            status_code=status.HTTP_400_BAD_REQUEST,
-        )
-
-
-# ── Exception Handlers ──────────────────────────────────
-
-async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
-    """Handle all custom AppException subclasses."""
     return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "success": False,
-            "error": exc.message,
-        },
+        status_code=500,
+        content={"detail": str(exc) or "An internal server error occurred."},
     )
 
 
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Catch-all handler for unexpected errors."""
-    return JSONResponse(
-        status_code=500,
-        content={
-            "success": False,
-            "error": "An unexpected error occurred",
-        },
-    )
+    return await http_error_handler(request, exc)

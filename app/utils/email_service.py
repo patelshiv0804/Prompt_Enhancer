@@ -7,7 +7,9 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from app.core.config import get_settings
-from app.core.logger import logger
+import logging
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
