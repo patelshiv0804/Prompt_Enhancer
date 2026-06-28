@@ -2,7 +2,7 @@
 Users module — FastAPI router for profile management endpoints (Module A).
 """
 
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile, status
@@ -21,6 +21,7 @@ from app.schemas.user import (
 )
 from app.services.user_service import ProfileService
 from app.utils.email_service import send_otp_email
+from app.schemas.prompt import PromptRead
 
 router = APIRouter(prefix="/profile", tags=["Profile Management"])
 
@@ -186,3 +187,18 @@ async def get_activity(
     """Get the user's recent activity summary."""
     service = ProfileService(db)
     return await service.get_activity(user_id)
+
+
+# ── P09: Get current user prompts ────────────────────────
+@router.get(
+    "/prompts",
+    response_model=List[PromptRead],
+    summary="Get current user prompts",
+)
+async def get_user_prompts(
+    user_id: UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch all prompts created by the logged-in user."""
+    service = ProfileService(db)
+    return await service.get_user_prompts(user_id)

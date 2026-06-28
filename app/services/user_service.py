@@ -160,3 +160,9 @@ class ProfileService:
             "activities": activities,
             "total_count": len(activities)
         }
+
+    async def get_user_prompts(self, user_id: UUID) -> list[Prompt]:
+        await self.get_profile(user_id)
+        query = select(Prompt).where(Prompt.user_id == user_id)
+        res = await self.db.execute(query)
+        return list(res.scalars().all())
