@@ -14,26 +14,6 @@ router = APIRouter(prefix="/profiles", tags=["profiles"])
 profile_service = ProfileService(ProfileRepository())
 
 
-@router.post(
-    "/",
-    response_model=APIResponse[ProfileRead],
-    summary="Create User Profile",
-    description="Registers a new user profile with a unique email address.",
-    responses={
-        400: {"model": ErrorResponse, "description": "Profile details are invalid or the email is already registered."},
-        500: {"model": ErrorResponse, "description": "Internal server error occurred during registration."},
-    },
-)
-async def create_profile(
-    payload: ProfileCreate,
-    session=Depends(get_session),
-) -> APIResponse[ProfileRead]:
-    try:
-        profile = await profile_service.create_profile(session, payload)
-        return APIResponse(message="Profile created.", data=ProfileRead(**profile.model_dump()))
-    except Exception as exc:
-        raise map_service_error(exc)
-
 
 @router.get(
     "/",
@@ -59,31 +39,6 @@ async def list_profiles(
         total=len(profiles),
     )
 
-
-@router.get(
-    "/me",
-    response_model=APIResponse[ProfileRead],
-    summary="Get Current Profile",
-    description="Returns the authenticated user's profile details.",
-    responses={
-        401: {"model": ErrorResponse, "description": "Authentication required."},
-        404: {"model": ErrorResponse, "description": "Profile not found."},
-        500: {"model": ErrorResponse, "description": "Internal server error occurred."},
-    },
-)
-async def get_current_profile(
-    current_user: Optional[str] = Depends(get_current_user),
-    session=Depends(get_session),
-) -> APIResponse[ProfileRead]:
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required.")
-    try:
-        profile = await profile_service.profile_repository.get_by_email(session, current_user)
-        if not profile:
-            raise HTTPException(status_code=404, detail="Profile not found.")
-        return APIResponse(message="Authenticated user retrieved.", data=ProfileRead(**profile.model_dump()))
-    except Exception as exc:
-        raise map_service_error(exc)
 
 
 @router.get(
