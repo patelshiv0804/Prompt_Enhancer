@@ -132,6 +132,7 @@ class Template(SQLModel, table=True):
     body: str = Field(sa_column=Column(Text, nullable=False))
     mode: Optional[str] = Field(default=None, sa_column=Column(String(length=100), nullable=True))
     category: Optional[str] = Field(default=None, sa_column=Column(String(length=100), nullable=True))
+    role: Optional[str] = Field(default=None, sa_column=Column(String(length=100), nullable=True))
     ai_model_id: UUID = Field(
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("ai_models.id", ondelete="CASCADE"), nullable=False)
     )

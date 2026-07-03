@@ -15,6 +15,7 @@ class TemplateBase(BaseModel):
     body: str = Field(..., min_length=1)
     mode: Optional[TemplateMode] = None
     category: Optional[str] = Field(default=None, max_length=100)
+    role: Optional[str] = Field(default=None, max_length=100)
     ai_model_id: UUID
     tags: Optional[List[str]] = Field(default_factory=list)
 
@@ -31,6 +32,7 @@ class TemplateUpdate(BaseModel):
     body: Optional[str] = Field(default=None, min_length=1)
     mode: Optional[TemplateMode] = None
     category: Optional[str] = Field(default=None, max_length=100)
+    role: Optional[str] = Field(default=None, max_length=100)
     ai_model_id: Optional[UUID] = None
     tags: Optional[List[str]] = None
     is_featured: Optional[bool] = None
@@ -42,6 +44,7 @@ class TemplateSummary(BaseModel):
     id: UUID
     title: str
     category: Optional[str] = None
+    role: Optional[str] = None
     mode: Optional[TemplateMode] = None
     is_featured: bool
     is_approved: bool
