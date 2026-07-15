@@ -49,6 +49,7 @@ class PromptEnhancementService:
         mode: Optional[str] = None,
         prompt: str = "",
         variables: Optional[dict[str, str]] = None,
+        style_attributes: Optional[dict[str, Any]] = None,
     ) -> dict:
         logger.info("Starting prompt enhancement request")
         
@@ -96,6 +97,7 @@ class PromptEnhancementService:
                     mode=mode,
                     rendered_template=rendered_template,
                     system_instructions=strong_sys_instructions,
+                    style_attributes=style_attributes,
                 )
                 
                 logger.info("Calling LLM provider. Compiled prompt size: %d chars", len(final_prompt))

@@ -356,3 +356,77 @@ async def test_prompt_regeneration_service(db_session):
     assert res["success"] is True
     assert res["data"]["version_number"] == 2
     assert "Enhanced" in res["data"]["enhanced_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_enhance_prompt_with_style_profile(db_session):
+    import math
+    mock_vector = [1.0 / math.sqrt(384)] * 384
+
+    model = (await db_session.execute(select(AIModel).limit(1))).scalars().first()
+    assert model is not None
+
+    tmpl = Template(
+        title="Regen Service Test Template",
+        body="Optimize: {prompt}",
+        mode="regen_service_mode",
+        role="regen_service_role",
+        ai_model_id=model.id,
+        embedding=mock_vector,
+        is_approved=True
+    )
+    db_session.add(tmpl)
+
+    from app.db.models import StyleProfile
+    style = StyleProfile(
+        name="Regen Style Profile Test",
+        type="brand_voice",
+        attributes={"tone": "authoritative", "length": "short"},
+        is_active=True
+    )
+    db_session.add(style)
+    await db_session.commit()
+
+    try:
+        from app.repositories.template import TemplateRepository
+        from app.services.prompt_enhancement_service import PromptEnhancementService
+        from app.services.template_retrieval_service import TemplateRetrievalService
+        from app.services.ranking_service import RankingService
+        from app.api.v1.deps import get_llm_provider, get_embedding_service
+
+        template_repo = TemplateRepository()
+        emb = get_embedding_service()
+        llm = get_llm_provider()
+
+        retrieval_service = TemplateRetrievalService(
+            repository=template_repo,
+            ranking_service=RankingService(),
+            embedding_service=emb,
+        )
+        enhancement_service = PromptEnhancementService(
+            llm_provider=llm,
+            retrieval_service=retrieval_service,
+        )
+
+        # 1. Without style
+        res1 = await enhancement_service.enhance_prompt(
+            session=db_session,
+            role="regen_service_role",
+            mode="regen_service_mode",
+            prompt="Write a sales pitch.",
+        )
+        assert "Enhanced" in res1["enhanced_prompt"]
+
+        # 2. With style attributes
+        res2 = await enhancement_service.enhance_prompt(
+            session=db_session,
+            role="regen_service_role",
+            mode="regen_service_mode",
+            prompt="Write a sales pitch.",
+            style_attributes=style.attributes,
+        )
+        assert "Enhanced" in res2["enhanced_prompt"]
+    finally:
+        await db_session.delete(style)
+        await db_session.delete(tmpl)
+        await db_session.commit()

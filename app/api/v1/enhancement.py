@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from typing import Optional, Any
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +32,8 @@ class EnhancePromptRequest(BaseModel):
     mode: Optional[str] = Field(default=None, description="Target work or study mode", examples=["Market Research"])
     prompt: str = Field(..., description="Raw prompt content to enhance", examples=["Find the ideal customer for my SaaS."])
     variables: Optional[dict[str, str]] = Field(default=None, description="Template placeholder replacements", examples=[{"BUSINESS_CONTEXT": "remote SaaS", "LANGUAGE": "English"}])
+    apply_style: bool = Field(default=False, description="Apply style profile")
+    style_profile_id: Optional[UUID] = Field(default=None, description="Style profile UUID")
 
 
 class AnalyzePromptRequest(BaseModel):
@@ -105,6 +108,15 @@ async def enhance_prompt(
         if not profile:
             raise HTTPException(status_code=404, detail="Authenticated profile user not found.")
 
+        # Check and load style profile
+        style_attributes = None
+        if payload.apply_style and payload.style_profile_id:
+            from app.db.models import StyleProfile
+            style_profile = await session.get(StyleProfile, payload.style_profile_id)
+            if not style_profile or style_profile.deleted_at is not None:
+                raise HTTPException(status_code=404, detail="Style profile not found.")
+            style_attributes = style_profile.attributes
+
         # 1. Run prompt enhancement
         enhance_res = await enhancement_service.enhance_prompt(
             session=session,
@@ -112,6 +124,7 @@ async def enhance_prompt(
             mode=payload.mode,
             prompt=payload.prompt,
             variables=payload.variables,
+            style_attributes=style_attributes,
         )
         enhanced_text = enhance_res["enhanced_prompt"]
 

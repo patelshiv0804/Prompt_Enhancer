@@ -1,6 +1,6 @@
 import pytest
 from sqlmodel import select
-from app.db.models import AIModel, Profile, Template, Prompt, PromptVersion
+from app.db.models import AIModel, Profile, Template, Prompt, PromptVersion, StyleProfile
 
 @pytest.mark.asyncio
 async def test_health_endpoints(client):
@@ -171,3 +171,54 @@ async def test_prompt_versions_restore(client, db_session):
     # 3. Verify restore conflict (already active)
     res = await client.post(f"/api/v1/prompts/{prompt.id}/restore/1", headers=headers)
     assert res.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_enhance_prompt_with_style_profile_api(client, db_session):
+    import math
+    mock_vector = [1.0 / math.sqrt(384)] * 384
+
+    # Retrieve first profile and model
+    profile = (await db_session.execute(select(Profile).limit(1))).scalars().first()
+    model = (await db_session.execute(select(AIModel).limit(1))).scalars().first()
+    assert model is not None
+
+    # Create dummy template with matching embedding
+    tmpl = Template(
+        title="Regen API Test Template",
+        body="Regen: {prompt}",
+        mode="regen_api_mode",
+        role="regen_api_role",
+        ai_model_id=model.id,
+        embedding=mock_vector,
+        is_approved=True
+    )
+    db_session.add(tmpl)
+
+    # Create style profile
+    style = StyleProfile(
+        name="API Style Profile Test",
+        type="brand_voice",
+        attributes={"tone": "cinematic", "mood": "dark"},
+        is_active=True
+    )
+    db_session.add(style)
+    await db_session.commit()
+
+    try:
+        headers = {"X-Current-User": profile.email}
+        payload = {
+            "role": "regen_api_role",
+            "mode": "regen_api_mode",
+            "prompt": "SaaS positioning pitch.",
+            "apply_style": True,
+            "style_profile_id": str(style.id),
+        }
+        res = await client.post("/api/v1/enhance", json=payload, headers=headers)
+        assert res.status_code == 200
+        assert res.json()["success"] is True
+        assert "enhanced_prompt" in res.json()["data"]
+    finally:
+        await db_session.delete(style)
+        await db_session.delete(tmpl)
+        await db_session.commit()

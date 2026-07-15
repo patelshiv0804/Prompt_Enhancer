@@ -26,6 +26,7 @@ class PromptBuilder:
         mode: str,
         rendered_template: str,
         system_instructions: Optional[str] = None,
+        style_attributes: Optional[dict] = None,
     ) -> str:
         logger.info("Building final prompt for Mistral AI")
         sys_inst = system_instructions or self.DEFAULT_SYSTEM_INSTRUCTIONS
@@ -34,8 +35,14 @@ class PromptBuilder:
         parts = [
             f"=== SYSTEM INSTRUCTIONS ===\n{sys_inst.strip()}",
             f"=== TARGET PROFILE ===\nRole: {role.strip()}\nMode: {mode.strip()}",
-            f"=== RETRIEVED ENHANCEMENT TEMPLATE ===\n{rendered_template.strip()}"
         ]
+
+        if style_attributes:
+            import json
+            attr_str = json.dumps(style_attributes, indent=2)
+            parts.append(f"=== STYLE PROFILE ATTRIBUTES ===\n{attr_str}")
+
+        parts.append(f"=== RETRIEVED ENHANCEMENT TEMPLATE ===\n{rendered_template.strip()}")
 
         final_prompt = "\n\n".join(parts)
         logger.debug("Compiled prompt length: %d chars", len(final_prompt))
