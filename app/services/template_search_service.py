@@ -33,6 +33,7 @@ class TemplateSearchService:
         session: AsyncSession,
         user_prompt: str,
         mode: str,
+        role: Optional[str] = None,
         top_k: Optional[int] = None,
         threshold: Optional[float] = None,
     ) -> list[dict]:
@@ -42,18 +43,18 @@ class TemplateSearchService:
         top_k = top_k or self.top_k
         threshold = threshold or self.threshold
 
-        logger.info("Template search started for mode=%s top_k=%d threshold=%s", mode, top_k, threshold)
+        logger.info("Template search started for mode=%s role=%s top_k=%d threshold=%s", mode, role, top_k, threshold)
 
         try:
             prompt_embedding = self.embedding_service.generate_for_prompt(user_prompt)
         except EmbeddingGenerationError as exc:
             raise TemplateSearchError("Failed to generate prompt embedding.") from exc
 
-        templates = await self._fetch_candidate_templates(session, mode)
+        templates = await self._fetch_candidate_templates(session, mode, role)
         if not templates:
             raise NoTemplateMatchError("No approved templates found for the requested mode.")
 
-        similarity_scores = self._compute_similarity(session, prompt_embedding, templates)
+        similarity_scores = self._compute_similarity(prompt_embedding, templates)
         filtered = [t for t in templates if similarity_scores.get(str(t.id), 0.0) >= threshold]
         if not filtered:
             raise NoTemplateMatchError("No templates passed the similarity threshold.")
@@ -68,10 +69,11 @@ class TemplateSearchService:
         )
         return result[:top_k]
 
-    async def _fetch_candidate_templates(self, session: AsyncSession, mode: str) -> list[Template]:
+    async def _fetch_candidate_templates(self, session: AsyncSession, mode: str, role: Optional[str] = None) -> list[Template]:
         return await self.repository.list_templates(
             session=session,
             mode=mode,
+            role=role,
             is_approved=True,
             only_active_models=True,
             limit=1000,

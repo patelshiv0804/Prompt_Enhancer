@@ -21,9 +21,9 @@ class TemplateSelectionService:
         self.search_service = search_service
         self.repository = repository
 
-    async def select_template(self, session: AsyncSession, user_prompt: str, mode: str) -> dict:
-        logger.info("Selecting template for mode=%s", mode)
-        templates = await self.search_service.search_templates(session, user_prompt, mode)
+    async def select_template(self, session: AsyncSession, user_prompt: str, mode: str, role: str | None = None) -> dict:
+        logger.info("Selecting template for mode=%s role=%s", mode, role)
+        templates = await self.search_service.search_templates(session, user_prompt, mode, role)
         if not templates:
             raise NoTemplateMatchError("No template matched the requested mode and prompt.")
 

@@ -11,7 +11,7 @@ from .enums import VersionType
 
 class PromptVersionBase(BaseModel):
     version_number: int = Field(..., ge=1)
-    version_type: Optional[VersionType] = None
+    version_type: Optional[str] = None
     content: str = Field(..., min_length=1)
     change_summary: Optional[str] = Field(default=None, max_length=1000)
 
@@ -31,7 +31,7 @@ class PromptVersionRead(PromptVersionBase):
 class PromptVersionSummary(BaseModel):
     id: UUID
     version_number: int
-    version_type: Optional[VersionType] = None
+    version_type: Optional[str] = None
     change_summary: Optional[str] = None
     created_at: datetime
 

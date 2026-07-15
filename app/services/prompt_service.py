@@ -46,6 +46,8 @@ class PromptService:
         user_id: Optional[str] = None,
         template_id: Optional[str] = None,
         ai_model_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> list[Prompt]:
         return await self.repository.list_prompts(
             session=session,
@@ -54,6 +56,8 @@ class PromptService:
             user_id=user_id,
             template_id=template_id,
             ai_model_id=ai_model_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
 
     async def update_prompt(self, session: AsyncSession, prompt_id: str, values: dict) -> Prompt:
@@ -62,4 +66,10 @@ class PromptService:
 
     async def delete_prompt(self, session: AsyncSession, prompt_id: str) -> None:
         prompt = await self.get_prompt(session, prompt_id)
-        await self.repository.delete(session, prompt)
+        from app.core.config import settings
+        from datetime import datetime, timezone
+        if settings.enable_soft_delete:
+            prompt.deleted_at = datetime.now(timezone.utc)
+            await self.repository.update(session, prompt, {})
+        else:
+            await self.repository.delete(session, prompt)

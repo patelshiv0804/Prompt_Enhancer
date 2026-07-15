@@ -60,5 +60,28 @@ class PromptDetailResponse(BaseModel):
     version_count: int = Field(default=0, ge=0)
     total_score: Optional[float] = None
     grade: Optional[PromptGrade] = None
+    analysis: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
+
+
+class RegeneratePromptRequest(BaseModel):
+    feedback: Optional[str] = Field(default=None, description="Natural language feedback to refine the prompt")
+
+
+class RegenerateAnalysisSummary(BaseModel):
+    overall_score: int
+    grade: str
+
+
+class RegeneratePromptData(BaseModel):
+    prompt_id: UUID
+    version_number: int
+    enhanced_prompt: str
+    analysis: RegenerateAnalysisSummary
+
+
+class RegeneratePromptResponse(BaseModel):
+    success: bool
+    message: str
+    data: RegeneratePromptData

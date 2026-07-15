@@ -13,7 +13,7 @@ class TemplateBase(BaseModel):
     title: str = Field(..., max_length=255)
     description: Optional[str] = Field(default=None, max_length=1000)
     body: str = Field(..., min_length=1)
-    mode: Optional[TemplateMode] = None
+    mode: Optional[str] = None
     category: Optional[str] = Field(default=None, max_length=100)
     role: Optional[str] = Field(default=None, max_length=100)
     ai_model_id: UUID
@@ -30,7 +30,7 @@ class TemplateUpdate(BaseModel):
     title: Optional[str] = Field(default=None, max_length=255)
     description: Optional[str] = Field(default=None, max_length=1000)
     body: Optional[str] = Field(default=None, min_length=1)
-    mode: Optional[TemplateMode] = None
+    mode: Optional[str] = None
     category: Optional[str] = Field(default=None, max_length=100)
     role: Optional[str] = Field(default=None, max_length=100)
     ai_model_id: Optional[UUID] = None
@@ -45,7 +45,7 @@ class TemplateSummary(BaseModel):
     title: str
     category: Optional[str] = None
     role: Optional[str] = None
-    mode: Optional[TemplateMode] = None
+    mode: Optional[str] = None
     is_featured: bool
     is_approved: bool
 

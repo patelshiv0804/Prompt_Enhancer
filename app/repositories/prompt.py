@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +22,11 @@ class PromptRepository(BaseRepository[Prompt]):
         include_ai_model: bool = False,
         include_versions: bool = False,
     ) -> Optional[Prompt]:
+        from app.core.config import settings
         statement = select(Prompt).where(Prompt.id == id)
+        statement = statement.options(selectinload(Prompt.current_version))
+        if settings.enable_soft_delete:
+            statement = statement.where(Prompt.deleted_at == None)
         if include_template:
             statement = statement.options(selectinload(Prompt.template))
         if include_ai_model:
@@ -40,14 +44,31 @@ class PromptRepository(BaseRepository[Prompt]):
         user_id: Optional[str] = None,
         template_id: Optional[str] = None,
         ai_model_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> list[Prompt]:
+        from app.core.config import settings
         statement = select(Prompt)
+        if settings.enable_soft_delete:
+            statement = statement.where(Prompt.deleted_at == None)
         if user_id is not None:
             statement = statement.where(Prompt.user_id == user_id)
         if template_id is not None:
             statement = statement.where(Prompt.template_id == template_id)
         if ai_model_id is not None:
             statement = statement.where(Prompt.ai_model_id == ai_model_id)
+
+        # Apply sorting
+        if sort_by:
+            col = getattr(Prompt, sort_by, None)
+            if col is not None:
+                if sort_order == "desc":
+                    statement = statement.order_by(col.desc())
+                else:
+                    statement = statement.order_by(col.asc())
+        else:
+            statement = statement.order_by(Prompt.created_at.desc())
+
         statement = statement.limit(limit).offset(offset)
         result = await session.execute(statement)
         return result.scalars().all()
@@ -78,3 +99,61 @@ class PromptRepository(BaseRepository[Prompt]):
         offset: int = 0,
     ) -> list[Prompt]:
         return await self.list_prompts(session, ai_model_id=ai_model_id, limit=limit, offset=offset)
+
+    async def search_prompts_with_vector(
+        self,
+        session: AsyncSession,
+        vector: list[float],
+        limit: int = 10,
+        role: Optional[str] = None,
+        mode: Optional[str] = None,
+        template_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        date_from: Optional[Any] = None,
+        date_to: Optional[Any] = None,
+        include_versions: bool = False,
+    ) -> list[tuple[Prompt, float]]:
+        from sqlalchemy import func
+        from app.db.models import Template
+        from app.core.config import settings
+
+        distance_col = Prompt.embedding.cosine_distance(vector).label("distance")
+        statement = select(Prompt, distance_col).where(Prompt.embedding != None)
+        if include_versions:
+            statement = statement.options(selectinload(Prompt.versions))
+
+        # Soft Delete Filter
+        if settings.enable_soft_delete:
+            statement = statement.where(Prompt.deleted_at == None)
+
+        if user_id is not None:
+            statement = statement.where(Prompt.user_id == user_id)
+        if template_id is not None:
+            statement = statement.where(Prompt.template_id == template_id)
+        if date_from is not None:
+            statement = statement.where(Prompt.created_at >= date_from)
+        if date_to is not None:
+            statement = statement.where(Prompt.created_at <= date_to)
+
+        if role is not None or mode is not None:
+            statement = statement.join(Prompt.template)
+            if role is not None:
+                statement = statement.where(func.lower(Template.role) == func.lower(role))
+            if mode is not None:
+                statement = statement.where(func.lower(Template.mode) == func.lower(mode))
+
+        statement = statement.order_by(Prompt.embedding.cosine_distance(vector))
+        statement = statement.limit(limit)
+
+        result = await session.execute(statement)
+        return [(r[0], 1.0 - r[1] if r[1] is not None else 0.0) for r in result.all()]
+
+    async def find_duplicates(
+        self,
+        session: AsyncSession,
+        vector: list[float],
+        threshold: float,
+        limit: int = 1,
+    ) -> list[tuple[Prompt, float]]:
+        res = await self.search_prompts_with_vector(session, vector, limit=limit)
+        return [r for r in res if r[1] >= threshold]

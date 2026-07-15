@@ -33,8 +33,10 @@ class TemplateRepository(BaseRepository[Template]):
         offset: int = 0,
         mode: Optional[str] = None,
         category: Optional[str] = None,
+        role: Optional[str] = None,
         ai_model_id: Optional[str] = None,
         is_approved: Optional[bool] = None,
+        is_featured: Optional[bool] = None,
         only_active_models: bool = False,
     ) -> list[Template]:
         statement = select(Template)
@@ -42,10 +44,15 @@ class TemplateRepository(BaseRepository[Template]):
             statement = statement.where(Template.mode == mode)
         if category is not None:
             statement = statement.where(Template.category == category)
+        if role is not None:
+            from sqlalchemy import func
+            statement = statement.where(func.lower(Template.role) == func.lower(role))
         if ai_model_id is not None:
             statement = statement.where(Template.ai_model_id == ai_model_id)
         if is_approved is not None:
             statement = statement.where(Template.is_approved == is_approved)
+        if is_featured is not None:
+            statement = statement.where(Template.is_featured == is_featured)
         if only_active_models:
             statement = statement.join(Template.ai_model).where(AIModel.is_active == True)
         statement = statement.limit(limit).offset(offset)
@@ -65,3 +72,38 @@ class TemplateRepository(BaseRepository[Template]):
         statement = select(Template).where(Template.ai_model_id == ai_model_id).limit(limit).offset(offset)
         result = await session.execute(statement)
         return result.scalars().all()
+
+    async def search_templates_with_vector(
+        self,
+        session: AsyncSession,
+        vector: list[float],
+        role: Optional[str] = None,
+        mode: Optional[str] = None,
+        is_approved: Optional[bool] = None,
+        limit: int = 100,
+    ) -> list[tuple[Template, float]]:
+        from sqlalchemy import func
+        distance_col = Template.embedding.cosine_distance(vector).label("distance")
+        statement = select(Template, distance_col)
+        if is_approved is not None:
+            statement = statement.where(Template.is_approved == is_approved)
+        if role is not None:
+            statement = statement.where(func.lower(Template.role) == func.lower(role))
+        if mode is not None:
+            statement = statement.where(func.lower(Template.mode) == func.lower(mode))
+            
+        statement = statement.order_by(Template.embedding.cosine_distance(vector))
+        statement = statement.limit(limit)
+        result = await session.execute(statement)
+        rows = result.all()
+        return [(row[0], 1.0 - float(row[1])) for row in rows if row[1] is not None]
+
+    async def get_distinct_roles(self, session: AsyncSession) -> list[str]:
+        statement = select(Template.role).distinct().where(Template.is_approved == True)
+        result = await session.execute(statement)
+        return [r for r in result.scalars().all() if r]
+
+    async def get_distinct_modes(self, session: AsyncSession) -> list[str]:
+        statement = select(Template.mode).distinct().where(Template.is_approved == True)
+        result = await session.execute(statement)
+        return [m for m in result.scalars().all() if m]

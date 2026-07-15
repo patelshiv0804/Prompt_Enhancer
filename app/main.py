@@ -194,6 +194,19 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, generic_exception_handler)
     app.add_exception_handler(Exception, http_error_handler)
 
+    @app.get("/health", tags=["health"])
+    async def root_health():
+        from app.db.session import verify_database_startup
+        db_status = "connected"
+        try:
+            await verify_database_startup()
+        except Exception:
+            db_status = "failed"
+        return {
+            "status": "healthy" if db_status == "connected" else "unhealthy",
+            "database": db_status,
+            "environment": settings.environment,
+        }
 
     app.include_router(api_router, prefix="/api")
 

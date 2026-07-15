@@ -206,6 +206,7 @@ class Prompt(SQLModel, table=True):
     embedding: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(384), nullable=True))
     total_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
     grade: Optional[str] = Field(default=None, sa_column=Column(String(length=16), nullable=True))
+    deleted_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 
     profile: Optional[Profile] = Relationship(back_populates="prompts")
     template: Optional[Template] = Relationship(back_populates="prompts")

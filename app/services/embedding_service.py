@@ -42,7 +42,7 @@ class EmbeddingService:
     def generate_for_prompt(self, prompt: str) -> List[float]:
         if not prompt.strip():
             raise EmbeddingGenerationError("Prompt text must not be empty.")
-        return self.generate([prompt])
+        return self.generate([prompt])[0]
 
     def normalize(self, embedding: List[float]) -> List[float]:
         normalized = normalize_embeddings([embedding])

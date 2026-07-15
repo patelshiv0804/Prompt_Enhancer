@@ -6,6 +6,7 @@ from app.api.v1.prompt_versions import router as prompt_versions_router
 from app.api.v1.profiles import router as profiles_router
 from app.api.v1.prompts import router as prompts_router
 from app.api.v1.templates import router as templates_router
+from app.api.v1.enhancement import router as enhancement_router
 from app.api.v1.analytics import router as analytics_router
 from app.api.v1.recommendation import router as recommendation_router
 from app.api.v1.delete import router as delete_router
@@ -22,6 +23,7 @@ from app.api.v1.settings import router as settings_router
 
 api_router = APIRouter()
 api_router.include_router(health_router, prefix="", tags=["health"])
+api_router.include_router(enhancement_router, prefix="")
 api_router.include_router(profiles_router, prefix="", tags=["profiles"])
 api_router.include_router(ai_models_router, prefix="", tags=["ai_models"])
 api_router.include_router(templates_router, prefix="", tags=["templates"])

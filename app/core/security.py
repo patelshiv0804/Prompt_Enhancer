@@ -16,7 +16,7 @@ from app.core.config import get_settings
 settings = get_settings()
 
 # ── OAuth2 scheme ────────────────────────────────────────
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
 
 def hash_password(password: str) -> str:
@@ -62,11 +62,22 @@ def decode_access_token(token: str) -> dict:
         )
 
 
-async def get_current_user_id(token: str = Depends(oauth2_scheme)) -> UUID:
+async def get_current_user_id(token: Optional[str] = Depends(oauth2_scheme)) -> UUID:
     """
     FastAPI dependency — extracts user_id (UUID) from the JWT token.
     Used by all authenticated endpoints.
     """
+    if settings.enable_dev_auth_bypass:
+        from uuid import UUID
+        return UUID("08c9bff2-3c05-4d5c-b6ef-abde18137538")
+
+    if token is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     payload = decode_access_token(token)
     user_id: str = payload.get("sub")
     if user_id is None:

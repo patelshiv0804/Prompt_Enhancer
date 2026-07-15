@@ -31,8 +31,10 @@ class TemplateService:
         offset: int = 0,
         mode: Optional[str] = None,
         category: Optional[str] = None,
+        role: Optional[str] = None,
         ai_model_id: Optional[str] = None,
         is_approved: Optional[bool] = None,
+        is_featured: Optional[bool] = None,
         only_active_models: bool = False,
     ) -> list[Template]:
         return await self.repository.list_templates(
@@ -41,8 +43,10 @@ class TemplateService:
             offset=offset,
             mode=mode,
             category=category,
+            role=role,
             ai_model_id=ai_model_id,
             is_approved=is_approved,
+            is_featured=is_featured,
             only_active_models=only_active_models,
         )
 

@@ -32,7 +32,9 @@ class MistralProvider(BaseLLMProvider):
         self.api_key = settings.mistral_api_key
         self.model = settings.mistral_model
         self.timeout = settings.mistral_timeout
-        self.endpoint = f"https://api.mistral.ai/v1/models/{self.model}/completions"
+        self.temperature = settings.mistral_temperature
+        self.max_tokens = settings.mistral_max_tokens
+        self.endpoint = "https://api.mistral.ai/v1/chat/completions"
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -58,10 +60,16 @@ class MistralProvider(BaseLLMProvider):
     async def analyze_prompt(self, prompt: str, **kwargs) -> PromptAnalysisResult:
         logger.info("Analyzing prompt with Mistral provider")
         payload = {
-            "prompt": (
-                "Analyze the following user prompt and score it for clarity, context, specificity, constraints, and output structure. "
-                "Return strengths, weaknesses, recommendations, and a single letter grade.\n\nPrompt:\n" + prompt
-            ),
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Analyze the following user prompt and score it for clarity, context, specificity, constraints, and output structure. "
+                        "Return strengths, weaknesses, recommendations, and a single letter grade.\n\nPrompt:\n" + prompt
+                    )
+                }
+            ],
             "max_tokens": 256,
             "temperature": 0.2,
         }
@@ -72,15 +80,15 @@ class MistralProvider(BaseLLMProvider):
     async def optimize_prompt(self, prompt: str, template_id: str, **kwargs) -> PromptOptimizationResult:
         logger.info("Optimizing prompt with Mistral provider using template_id=%s", template_id)
         payload = {
-            "prompt": (
-                "Generate an optimized version of the following user prompt by applying the selected template and improving clarity, context, specificity, constraints, and structure. "
-                "Do not change the user intent. Include only the optimized prompt in the response.\n\nPrompt:\n"
-                + prompt
-                + "\n\nTemplate ID:\n"
-                + template_id
-            ),
-            "max_tokens": 300,
-            "temperature": 0.3,
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+            "temperature": kwargs.get("temperature", self.temperature),
         }
         data = await self._post(payload)
         text = self._parse_text(data)
@@ -94,7 +102,10 @@ class MistralProvider(BaseLLMProvider):
     async def generate(self, prompt: str, **kwargs) -> GenerationResult:
         logger.info("Generating text with Mistral provider")
         payload = {
-            "prompt": prompt,
+            "model": self.model,
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
             "max_tokens": kwargs.get("max_tokens", 256),
             "temperature": kwargs.get("temperature", 0.7),
         }
@@ -105,7 +116,14 @@ class MistralProvider(BaseLLMProvider):
     async def health_check(self) -> HealthCheckResult:
         logger.info("Performing Mistral health check")
         try:
-            payload = {"prompt": "health check", "max_tokens": 1, "temperature": 0.0}
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {"role": "user", "content": "health check"}
+                ],
+                "max_tokens": 1,
+                "temperature": 0.0
+            }
             await self._post(payload)
             return HealthCheckResult(healthy=True)
         except LLMError as exc:
@@ -115,12 +133,10 @@ class MistralProvider(BaseLLMProvider):
         if not isinstance(data, dict):
             raise LLMProviderError("Unexpected Mistral response format.")
 
-        if "output" in data and isinstance(data["output"], str):
-            return data["output"]
         if "choices" in data and isinstance(data["choices"], list) and data["choices"]:
             first = data["choices"][0]
-            if isinstance(first, dict) and "text" in first:
-                return str(first["text"])
+            if isinstance(first, dict) and "message" in first and "content" in first["message"]:
+                return str(first["message"]["content"])
 
         raise LLMProviderError("Unable to parse Mistral response.")
 
