@@ -1,0 +1,329 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #0a0a0a;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter);
+
+  /* Brand Colors */
+  --color-brand-purple: #6366F1;
+  --color-brand-violet: #8B5CF6;
+  --color-brand-pink: #EC4899;
+  --color-brand-blue: #60A5FA;
+  --color-brand-purple-light: #A855F7;
+
+  /* Neutrals */
+  --color-muted: #6B7280;
+  --color-muted-light: #9CA3AF;
+  --color-border: #F3F4F6;
+  --color-surface: #FAFAFA;
+}
+
+/* ── Smooth scroll ── */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+  overflow-x: hidden;
+}
+
+/* ── Gradient text utility ── */
+.gradient-text {
+  background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 40%, #EC4899 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-text.italic {
+  padding-right: 0.15em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/* ── Floating animation ── */
+@keyframes float {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -12px, 0); }
+}
+
+@keyframes float-delayed {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -8px, 0); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.15; transform: scale(1) translateZ(0); }
+  50% { opacity: 0.3; transform: scale(1.05) translateZ(0); }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+  will-change: transform;
+}
+
+.animate-float-delayed {
+  animation: float-delayed 5s ease-in-out infinite;
+  animation-delay: 1s;
+  will-change: transform;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 3s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+/* ── Glow backgrounds ── */
+.glow-purple {
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.15) 0%, transparent 70%);
+}
+
+.glow-pink {
+  background: radial-gradient(circle, rgba(236, 72, 153, 0.12) 0%, transparent 70%);
+}
+
+.glow-blue {
+  background: radial-gradient(circle, rgba(96, 165, 250, 0.12) 0%, transparent 70%);
+}
+
+/* ── Card shadow with purple tint ── */
+.card-shadow {
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.04),
+    0 4px 12px rgba(0, 0, 0, 0.04),
+    0 8px 32px rgba(99, 102, 241, 0.06);
+}
+
+.card-shadow-lg {
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.03),
+    0 8px 24px rgba(0, 0, 0, 0.05),
+    0 16px 48px rgba(99, 102, 241, 0.08);
+}
+
+/* ── Platform ring pulse ── */
+@keyframes pulse-ring {
+  0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) scale(1); }
+  50% { opacity: 0.8; transform: translate(-50%, -50%) scale(1.04); }
+}
+
+/* ── Freeze animations while scrolling ── */
+.is-scrolling * {
+  animation-play-state: paused !important;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   DASHBOARD — CSS Variables & Utilities
+   (powers all /dashboard/* routes, coexists with Tailwind landing)
+   ══════════════════════════════════════════════════════════════════ */
+
+.dashboard-root {
+  /* ── 60-30-10 Color System ── */
+  --color-canvas: #FAFAFC;
+  --color-dark-surface: #0E0B18;
+  --color-dark-surface-2: #160F26;
+  --color-dark-surface-3: #1E1535;
+  --color-dark-border: rgba(167, 139, 250, 0.12);
+  --color-dark-text-primary: #EDE9FE;
+  --color-dark-text-secondary: rgba(221, 214, 254, 0.45);
+
+  /* ── Accent ── */
+  --color-primary: #7C3AED;
+  --color-primary-gradient: linear-gradient(135deg, #7C3AED 0%, #A855F7 100%);
+  --color-primary-hover: #8B5CF6;
+  --color-success: #10B981;
+  --color-error: #EF4444;
+
+  /* ── Typography ── */
+  --color-text-primary: #1A1033;
+  --color-text-secondary: #6B6B8A;
+
+  /* ── Glass ── */
+  --glass-bg: rgba(255, 255, 255, 0.70);
+  --glass-border: 1px solid rgba(124, 58, 237, 0.08);
+  --glass-shadow: 0 20px 60px rgba(109, 40, 217, 0.06), 0 8px 24px rgba(0,0,0,0.04);
+  --glass-inner-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.70);
+  --glass-blur: blur(24px);
+  --glass-radius: 28px;
+  --color-surface: #FAFAFA;
+
+  /* ── Diff ── */
+  --color-diff-remove: rgba(239, 68, 68, 0.12);
+  --color-diff-remove-text: #B91C1C;
+  --color-diff-add: rgba(16, 185, 129, 0.12);
+  --color-diff-add-text: #047857;
+
+  /* ── Radii & Transitions ── */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-full: 9999px;
+  --transition-fast: 250ms ease;
+  --transition-normal: 300ms ease-in-out;
+
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: var(--color-canvas);
+  background-image:
+    radial-gradient(ellipse 80% 60% at 10% 0%, rgba(167, 139, 250, 0.12), transparent 55%),
+    radial-gradient(ellipse 60% 50% at 90% 90%, rgba(124, 58, 237, 0.07), transparent 55%),
+    linear-gradient(180deg, #FFFFFF 0%, #FAFAFC 50%, #F4F2FF 100%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+}
+
+/* ── Dashboard Layout ── */
+.app-container {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+
+.content-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 64px;
+  padding-top: 4px;
+}
+
+.content-scroll--chat {
+  overflow: hidden;
+  padding-bottom: 0;
+  padding-top: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 48px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  padding-top: 8px;
+}
+
+/* ── Shared Animations ── */
+@keyframes ambientFloat {
+  0%   { transform: translate(0, 0) scale(1); }
+  50%  { transform: translate(30px, 20px) scale(1.1); }
+  100% { transform: translate(-20px, 30px) scale(0.95); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes groupItemsIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes dropdownFadeIn {
+  from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes barShine {
+  0%   { left: -40%; }
+  100% { left: 140%; }
+}
+
+@keyframes shimmerSweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+
+@keyframes ringPulse {
+  0%, 100% { filter: drop-shadow(0 0 8px rgba(124, 58, 237, 0.25)); }
+  50%       { filter: drop-shadow(0 0 16px rgba(124, 58, 237, 0.4)); }
+}
+
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes dimCardEnter {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes pulseGlow {
+  0%   { transform: scale(1); opacity: 1; }
+  50%  { transform: scale(1.15); opacity: 0.7; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes fadeInRise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Skeleton shimmer utility */
+.dashboard-root .skeleton {
+  background: linear-gradient(90deg, rgba(124,58,237,0.04) 25%, rgba(124,58,237,0.10) 50%, rgba(124,58,237,0.04) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite linear;
+  border-radius: 6px;
+}
+
+@media (max-width: 1024px) {
+  .workspace-container { padding: 0 32px; }
+}
+@media (max-width: 768px) {
+  .workspace-container { padding: 0 16px; padding-bottom: 80px; }
+}
