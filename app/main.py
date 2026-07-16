@@ -41,6 +41,15 @@ def create_app() -> FastAPI:
         },
     )
 
+    from fastapi.middleware.cors import CORSMiddleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     @app.get("/docs", include_in_schema=False)
     async def custom_swagger_ui_html() -> HTMLResponse:
         response = get_swagger_ui_html(
