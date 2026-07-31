@@ -1,3 +1,6 @@
+# ── pip index for CPU-only PyTorch (prevents 526MB CUDA download) ──
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 fastapi>=0.111.1
 uvicorn[standard]>=0.23.2
 sqlmodel>=0.0.8
@@ -8,7 +11,14 @@ alembic>=1.11.1
 pydantic>=2.10.0
 pydantic-settings>=2.10.0
 pgvector>=0.4.0
+# CPU-only torch must be listed before sentence-transformers
+torch>=2.0.0
 sentence-transformers>=2.2.2
 httpx>=0.24.0
-mistral>=0.1.0
+python-jose[cryptography]>=3.3.0
+bcrypt>=4.0.0
+email-validator>=2.0.0
+python-multipart>=0.0.9
+# NOTE: 'mistral>=0.1.0' is the OpenStack workflow service (WRONG package).
+# The Mistral AI LLM calls use plain httpx (see app/services/llm/mistral_provider.py)
 python-dotenv>=1.0.0

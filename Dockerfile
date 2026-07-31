@@ -41,6 +41,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY app/ /app/app
 COPY alembic/ /app/alembic
 COPY alembic.ini /app/alembic.ini
+COPY scripts/ /app/scripts
 
 # Set environment defaults
 ENV PORT=8000

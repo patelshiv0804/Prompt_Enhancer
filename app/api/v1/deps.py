@@ -244,3 +244,11 @@ def get_prompt_search_service(
     emb: EmbeddingService = Depends(get_embedding_service),
 ) -> PromptSearchService:
     return PromptSearchService(prompt_repository=prompt_repo, embedding_service=emb)
+
+# Tool Recommendation
+from app.services.tool_recommendation_service import ToolRecommendationService
+
+def get_tool_recommendation_service(
+    emb: EmbeddingService = Depends(get_embedding_service),
+) -> ToolRecommendationService:
+    return ToolRecommendationService(embedding_service=emb)

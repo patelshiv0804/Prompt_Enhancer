@@ -15,12 +15,14 @@ from app.api.v1.deps import (
     get_prompt_comparison_service,
     get_prompt_persistence_service,
     get_profile_repository,
+    get_tool_recommendation_service,
 )
 from app.api.v1.exceptions import map_service_error
 from app.services.prompt_enhancement_service import PromptEnhancementService
 from app.services.prompt_analysis_service import PromptAnalysisService
 from app.services.prompt_comparison_service import PromptComparisonService
 from app.services.prompt_persistence_service import PromptPersistenceService
+from app.services.tool_recommendation_service import ToolRecommendationService
 
 logger = logging.getLogger("promptiq.api.enhancement")
 router = APIRouter(tags=["Enhancement & Analysis"])
@@ -69,6 +71,18 @@ class EnhanceVersionSummary(BaseModel):
     version_number: int = Field(..., description="Version sequence number", examples=[1])
 
 
+class ToolEntry(BaseModel):
+    name: str = Field(..., description="Name of the recommended AI tool", examples=["Claude"])
+    rank: int = Field(..., description="Rank position (1, 2, or 3)", examples=[1])
+
+
+class ToolRecommendationSummary(BaseModel):
+    matched_task: str = Field(..., description="The user task matched from ranking table", examples=["Coding"])
+    match_type: str = Field(..., description="How the match was found: exact, alias, consensus, prompt_semantic, mode_semantic, or fallback", examples=["consensus"])
+    match_confidence: float = Field(..., description="Confidence of the match (0.0 to 1.0)", examples=[0.87])
+    tools: list[ToolEntry] = Field(..., description="Top 3 recommended AI tools for this task")
+
+
 class EnhancePromptData(BaseModel):
     original_prompt: str
     enhanced_prompt: str
@@ -76,6 +90,7 @@ class EnhancePromptData(BaseModel):
     comparison: EnhanceComparisonSummary
     template: EnhanceTemplateSummary
     version: EnhanceVersionSummary
+    tool_recommendations: ToolRecommendationSummary
 
 
 class EnhancePromptResponse(BaseModel):
@@ -98,6 +113,7 @@ async def enhance_prompt(
     analysis_service: PromptAnalysisService = Depends(get_prompt_analysis_service),
     comparison_service: PromptComparisonService = Depends(get_prompt_comparison_service),
     persistence_service: PromptPersistenceService = Depends(get_prompt_persistence_service),
+    tool_recommendation_service: ToolRecommendationService = Depends(get_tool_recommendation_service),
     profile_repo=Depends(get_profile_repository),
 ) -> EnhancePromptResponse:
     if not current_user:
@@ -151,6 +167,24 @@ async def enhance_prompt(
         )
         await session.commit()
 
+        # 6. Get AI tool recommendations (safe — never breaks core pipeline)
+        try:
+            tool_rec = await tool_recommendation_service.recommend(
+                prompt=payload.prompt,
+                mode=payload.mode,
+                role=payload.role,
+            )
+        except Exception:
+            logger.warning("Tool recommendation failed, using fallback")
+            tool_rec = tool_recommendation_service.get_fallback()
+
+        tool_rec_summary = ToolRecommendationSummary(
+            matched_task=tool_rec["matched_task"],
+            match_type=tool_rec["match_type"],
+            match_confidence=tool_rec["match_confidence"],
+            tools=[ToolEntry(**t) for t in tool_rec["tools"]],
+        )
+
         # Build paginated/normalized data
         data = EnhancePromptData(
             original_prompt=payload.prompt,
@@ -174,6 +208,7 @@ async def enhance_prompt(
             version=EnhanceVersionSummary(
                 version_number=1,
             ),
+            tool_recommendations=tool_rec_summary,
         )
         return EnhancePromptResponse(
             success=True,
