@@ -13,30 +13,37 @@ class ModelEnum(str, Enum):
     CHATGPT = "chatgpt"
     CLAUDE = "claude"
     GEMINI = "gemini"
+    GROK = "grok"
+    MIDJOURNEY = "midjourney"
+    VEO = "veo"
+    PERPLEXITY = "perplexity"
 
 class ModeEnum(str, Enum):
     GENERAL = "general"
-    CODE = "code"
     CREATIVE = "creative"
+    TECHNICAL = "technical"
+    MARKETING = "marketing"
+    CODING = "coding"
+    CODE = "code"  # legacy alias
 
 class ThemeUpdate(BaseModel):
-    theme: ThemeEnum
+    theme: str
 
 class DefaultModelUpdate(BaseModel):
-    default_model: ModelEnum
+    default_model: str
 
 class DefaultModeUpdate(BaseModel):
-    default_mode: ModeEnum
+    default_mode: str
 
 class BooleanToggle(BaseModel):
     enabled: bool
 
 class SettingsUpdate(BaseModel):
-    theme: Optional[ThemeEnum] = None
-    default_mode: Optional[ModeEnum] = None
-    default_model: Optional[ModelEnum] = None
+    theme: Optional[str] = None
+    default_mode: Optional[str] = None
+    default_model: Optional[str] = None
     show_diff_by_default: Optional[bool] = None
-    auto_detect_intent: Optional[bool] = None
+    auto_detect_intent: Optional[str | bool] = None
 
 class SettingsResponse(BaseModel):
     id: UUID

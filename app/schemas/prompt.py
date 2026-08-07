@@ -37,11 +37,15 @@ class PromptUpdate(BaseModel):
 class PromptSummary(BaseModel):
     id: UUID
     title: Optional[str] = None
+    original_prompt: Optional[str] = None
     template_id: Optional[UUID] = None
     ai_model_id: Optional[UUID] = None
     current_version_id: Optional[UUID] = None
     total_score: Optional[float] = None
-    grade: Optional[PromptGrade] = None
+    grade: Optional[str] = None
+    template: Optional[TemplateSummary] = None
+    ai_model: Optional[AIModelSummary] = None
+    current_version: Optional[PromptVersionSummary] = None
     created_at: datetime
     updated_at: datetime
 
@@ -59,8 +63,9 @@ class PromptDetailResponse(BaseModel):
     current_version: Optional[PromptVersionSummary] = None
     version_count: int = Field(default=0, ge=0)
     total_score: Optional[float] = None
-    grade: Optional[PromptGrade] = None
+    grade: Optional[str] = None
     analysis: Optional[dict] = None
+    tool_recommendations: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
 

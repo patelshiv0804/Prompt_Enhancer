@@ -21,7 +21,9 @@ from app.api.v1.deps import (
     get_prompt_recommendation_service,
     get_prompt_search_service,
     get_prompt_regeneration_service,
+    get_tool_recommendation_service,
 )
+from app.services.tool_recommendation_service import ToolRecommendationService
 from app.api.v1.exceptions import map_service_error
 from app.schemas.common import APIResponse, ErrorResponse, PaginatedResponse
 from app.schemas.prompt import (
@@ -55,6 +57,7 @@ router = APIRouter(prefix="/prompts", tags=["prompts"])
 )
 async def list_prompts(
     session: AsyncSession = Depends(get_session),
+    current_user: Optional[str] = Depends(get_current_user),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     sort_by: Optional[str] = Query(default="created_at"),
@@ -63,15 +66,23 @@ async def list_prompts(
     template_id: Optional[str] = Query(default=None),
     ai_model_id: Optional[str] = Query(default=None),
     prompt_service: PromptService = Depends(get_prompt_service),
+    profile_repo=Depends(get_profile_repository),
 ) -> PaginatedResponse[PromptSummary]:
     try:
         limit = page_size
         offset = (page - 1) * page_size
+
+        target_user_id = user_id
+        if not target_user_id and current_user:
+            profile = await profile_repo.get_by_email(session, current_user)
+            if profile:
+                target_user_id = str(profile.id)
+
         prompts = await prompt_service.list_prompts(
             session=session,
             limit=limit,
             offset=offset,
-            user_id=user_id,
+            user_id=target_user_id,
             template_id=template_id,
             ai_model_id=ai_model_id,
             sort_by=sort_by,
@@ -246,6 +257,7 @@ async def get_prompt(
     prompt_id: str,
     session: AsyncSession = Depends(get_session),
     prompt_service: PromptService = Depends(get_prompt_service),
+    tool_recommendation_service: ToolRecommendationService = Depends(get_tool_recommendation_service),
 ) -> APIResponse[PromptDetailResponse]:
     try:
         prompt = await prompt_service.get_prompt(
@@ -264,6 +276,21 @@ async def get_prompt(
                 "grade": prompt.grade,
             }
 
+        tool_rec_summary = None
+        try:
+            tool_rec = await tool_recommendation_service.recommend(
+                prompt=prompt.original_prompt,
+                mode=prompt.title,
+            )
+            tool_rec_summary = {
+                "matched_task": tool_rec["matched_task"],
+                "match_type": tool_rec["match_type"],
+                "match_confidence": tool_rec["match_confidence"],
+                "tools": tool_rec["tools"],
+            }
+        except Exception as exc:
+            logger.warning(f"Could not calculate tool recommendations for prompt {prompt_id}: {exc}")
+
         detail = PromptDetailResponse(
             id=prompt.id,
             title=prompt.title,
@@ -275,6 +302,7 @@ async def get_prompt(
             total_score=prompt.total_score,
             grade=prompt.grade,
             analysis=analysis_data,
+            tool_recommendations=tool_rec_summary,
             created_at=prompt.created_at,
             updated_at=prompt.updated_at,
         )

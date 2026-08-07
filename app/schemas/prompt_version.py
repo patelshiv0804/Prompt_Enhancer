@@ -32,6 +32,7 @@ class PromptVersionSummary(BaseModel):
     id: UUID
     version_number: int
     version_type: Optional[str] = None
+    content: Optional[str] = None
     change_summary: Optional[str] = None
     created_at: datetime
 

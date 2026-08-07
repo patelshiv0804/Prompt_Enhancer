@@ -44,12 +44,15 @@ class ProfileService:
         self,
         user_id: UUID,
         display_name: Optional[str] = None,
+        role: Optional[str] = None,
         avatar_file: Optional[UploadFile] = None,
     ) -> Profile:
         kwargs = {}
         if display_name is not None:
             kwargs["display_name"] = sanitize_display_name(display_name)
             kwargs["full_name"] = sanitize_display_name(display_name)
+        if role is not None:
+            kwargs["role"] = role.lower()
 
         if avatar_file is not None:
             filename = avatar_file.filename or ""
@@ -127,9 +130,32 @@ class ProfileService:
         profile = await self.get_profile(user_id)
         
         # Query total prompts count
-        prompt_query = select(func.count()).select_from(Prompt).where(Prompt.user_id == user_id)
+        prompt_query = select(Prompt).where(Prompt.user_id == user_id).where(Prompt.deleted_at == None)
         prompt_res = await self.db.execute(prompt_query)
-        total_prompts = prompt_res.scalar() or 0
+        prompts = list(prompt_res.scalars().all())
+        total_prompts = len(prompts)
+
+        # Compute average score from prompts that have a total_score
+        scored = [p.total_score for p in prompts if p.total_score is not None]
+        average_score = round(sum(scored) / len(scored), 1) if scored else 0.0
+
+        # Compute streak_days — consecutive days with at least one prompt
+        if prompts:
+            from datetime import date, timedelta
+            prompt_dates = sorted(
+                set(p.created_at.date() for p in prompts if p.created_at),
+                reverse=True,
+            )
+            streak = 0
+            expected = date.today()
+            for d in prompt_dates:
+                if d == expected or d == expected - timedelta(days=1):
+                    streak += 1
+                    expected = d - timedelta(days=1) if d == expected else d - timedelta(days=1)
+                else:
+                    break
+        else:
+            streak = 0
 
         # Query total templates count (global)
         template_query = select(func.count()).select_from(Template)
@@ -140,7 +166,9 @@ class ProfileService:
             "total_prompts": total_prompts,
             "total_templates": total_templates,
             "total_chains": 0,
-            "total_optimizations": total_prompts, # mock
+            "total_optimizations": total_prompts,
+            "average_score": average_score,
+            "streak_days": streak,
             "plan": profile.plan,
             "member_since": profile.created_at
         }

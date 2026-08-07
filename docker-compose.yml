@@ -42,6 +42,7 @@ services:
       - FROM_EMAIL=${FROM_EMAIL:-noreply@promptiq.com}
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
     volumes:
+      - .:/app
       - uploads:/app/uploads
     depends_on:
       db:

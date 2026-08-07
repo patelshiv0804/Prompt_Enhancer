@@ -56,7 +56,7 @@ async def update_settings(
         default_mode=body.default_mode,
         default_model=body.default_model,
         show_diff_by_default=body.show_diff_by_default,
-        auto_detect_intent=body.auto_detect_intent,
+        auto_detect_intent=body.auto_detect_intent if isinstance(body.auto_detect_intent, bool) else None,
     )
 
 
@@ -88,7 +88,7 @@ async def update_theme(
 ):
     """Change the application theme (light, dark, system)."""
     service = SettingsService(db)
-    return await service.update_theme(user_id, body.theme.value)
+    return await service.update_theme(user_id, body.theme)
 
 
 # ── S05: Change default AI model ─────────────────────────
@@ -104,7 +104,7 @@ async def update_default_model(
 ):
     """Set the preferred AI model as default."""
     service = SettingsService(db)
-    return await service.update_default_model(user_id, body.default_model.value)
+    return await service.update_default_model(user_id, body.default_model)
 
 
 # ── S06: Change default prompt mode ──────────────────────
@@ -120,7 +120,7 @@ async def update_default_mode(
 ):
     """Set the preferred prompt mode as default."""
     service = SettingsService(db)
-    return await service.update_default_mode(user_id, body.default_mode.value)
+    return await service.update_default_mode(user_id, body.default_mode)
 
 
 # ── S07: Enable / Disable intent detection ───────────────

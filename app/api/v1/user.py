@@ -49,6 +49,7 @@ async def get_profile(
 )
 async def update_profile(
     display_name: Optional[str] = Form(None),
+    role: Optional[str] = Form(None),
     avatar: Optional[UploadFile] = File(None),
     user_id: UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
@@ -61,6 +62,7 @@ async def update_profile(
     return await service.update_profile(
         user_id=user_id,
         display_name=display_name,
+        role=role,
         avatar_file=avatar,
     )
 

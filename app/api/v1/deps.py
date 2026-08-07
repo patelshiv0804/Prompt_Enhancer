@@ -26,7 +26,7 @@ async def get_current_user(
     if settings.enable_dev_auth_bypass:
         from uuid import UUID
         from app.db.models import Profile
-        dev_uuid = UUID("08c9bff2-3c05-4d5c-b6ef-abde18137538")
+        dev_uuid = UUID("899fd613-4e56-4921-b8f6-7fc1bf85fead")
         statement = select(Profile).where(Profile.id == dev_uuid)
         result = await session.execute(statement)
         profile = result.scalar_one_or_none()

@@ -110,7 +110,7 @@ class PromptEnhancementService:
                 )
                 latency = time.perf_counter() - start_time
 
-                enhanced_prompt = result.optimized_prompt
+                enhanced_prompt = self._clean_enhanced_output(result.optimized_prompt)
 
                 # Validate Response content
                 if not enhanced_prompt or not isinstance(enhanced_prompt, str):
@@ -175,3 +175,33 @@ class PromptEnhancementService:
             return True
 
         return False
+
+    def _clean_enhanced_output(self, text: str) -> str:
+        if not text or not isinstance(text, str):
+            return ""
+
+        cleaned = text.strip()
+
+        # If "ENHANCED PROMPT:" exists, extract everything after it
+        markers = ["ENHANCED PROMPT:", "ENHANCED PROMPT", "Enhanced Prompt:"]
+        for m in markers:
+            idx = cleaned.find(m)
+            if idx != -1:
+                cleaned = cleaned[idx + len(m):].strip()
+                break
+        else:
+            # Case insensitive search fallback
+            lower_text = cleaned.lower()
+            idx_lower = lower_text.find("enhanced prompt:")
+            if idx_lower != -1:
+                cleaned = cleaned[idx_lower + len("enhanced prompt:"):].strip()
+
+        # Strip lingering markdown code fence wrapper if entire response was wrapped
+        if cleaned.startswith("```"):
+            first_nl = cleaned.find("\n")
+            if first_nl != -1:
+                cleaned = cleaned[first_nl + 1:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+
+        return cleaned.strip()

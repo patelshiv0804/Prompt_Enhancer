@@ -28,8 +28,11 @@ class VersionType(str, Enum):
 
 
 class PromptGrade(str, Enum):
+    A_PLUS = "A+"
     A = "A"
+    B_PLUS = "B+"
     B = "B"
+    C_PLUS = "C+"
     C = "C"
     D = "D"
     F = "F"

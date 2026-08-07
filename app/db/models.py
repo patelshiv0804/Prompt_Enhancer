@@ -53,6 +53,7 @@ class Profile(SQLModel, table=True):
     )
 
     plan: str = Field(default="free", sa_column=Column(String, nullable=False, server_default=text("'free'")))
+    role: Optional[str] = Field(default="creator", sa_column=Column(String(length=100), nullable=True, server_default=text("'creator'")))
     onboarding_completed: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default=text("false")))
     deleted_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 

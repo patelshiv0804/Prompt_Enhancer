@@ -17,6 +17,7 @@ class ProfileResponse(BaseModel):
     email: str
     display_name: Optional[str] = None
     avatar_url: Optional[str] = None
+    role: Optional[str] = "creator"
     plan: str
     onboarding_completed: bool
     created_at: datetime
@@ -53,6 +54,8 @@ class StatsResponse(BaseModel):
     total_templates: int = 0
     total_chains: int = 0
     total_optimizations: int = 0
+    average_score: float = 0.0
+    streak_days: int = 0
     plan: str
     member_since: datetime
 

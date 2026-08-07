@@ -18,7 +18,12 @@ async_session = sessionmaker(
 
 async def get_async_session() -> AsyncSession:
     async with async_session() as session:
-        yield session
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
 
 
 async def verify_database_startup() -> None:

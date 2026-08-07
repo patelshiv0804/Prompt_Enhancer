@@ -91,6 +91,8 @@ class EnhancePromptData(BaseModel):
     template: EnhanceTemplateSummary
     version: EnhanceVersionSummary
     tool_recommendations: ToolRecommendationSummary
+    original_analysis: Optional[dict[str, Any]] = None
+    enhanced_analysis: Optional[dict[str, Any]] = None
 
 
 class EnhancePromptResponse(BaseModel):
@@ -189,6 +191,8 @@ async def enhance_prompt(
         data = EnhancePromptData(
             original_prompt=payload.prompt,
             enhanced_prompt=enhanced_text,
+            original_analysis=orig_analysis,
+            enhanced_analysis=enh_analysis,
             analysis=EnhanceAnalysisSummary(
                 overall_score=orig_analysis["overall_score"],
                 grade=orig_analysis["grade"],
@@ -207,6 +211,7 @@ async def enhance_prompt(
             ),
             version=EnhanceVersionSummary(
                 version_number=1,
+                prompt_id=str(prompt_record.id),
             ),
             tool_recommendations=tool_rec_summary,
         )
@@ -249,3 +254,37 @@ async def compare_prompts(
         return await comparison_service.compare(payload.original_prompt, payload.enhanced_prompt)
     except Exception as exc:
         raise map_service_error(exc)
+
+
+class RecommendToolsRequest(BaseModel):
+    prompt: str = Field(..., description="Prompt text to analyze for tool recommendation")
+    mode: Optional[str] = Field(default=None, description="Task mode")
+    role: Optional[str] = Field(default=None, description="User role")
+
+
+@router.post(
+    "/tools/recommend",
+    response_model=ToolRecommendationSummary,
+    summary="Get Recommended AI Tools",
+    description="Recommends the top 3 AI tools for a given prompt, mode, and role.",
+)
+async def recommend_tools(
+    payload: RecommendToolsRequest,
+    tool_recommendation_service: ToolRecommendationService = Depends(get_tool_recommendation_service),
+) -> ToolRecommendationSummary:
+    try:
+        tool_rec = await tool_recommendation_service.recommend(
+            prompt=payload.prompt,
+            mode=payload.mode,
+            role=payload.role,
+        )
+    except Exception:
+        tool_rec = tool_recommendation_service.get_fallback()
+
+    return ToolRecommendationSummary(
+        matched_task=tool_rec["matched_task"],
+        match_type=tool_rec["match_type"],
+        match_confidence=tool_rec["match_confidence"],
+        tools=[ToolEntry(**t) for t in tool_rec["tools"]],
+    )
+

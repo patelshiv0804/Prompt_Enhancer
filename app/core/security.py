@@ -67,30 +67,20 @@ async def get_current_user_id(token: Optional[str] = Depends(oauth2_scheme)) -> 
     FastAPI dependency — extracts user_id (UUID) from the JWT token.
     Used by all authenticated endpoints.
     """
+    if token:
+        try:
+            payload = decode_access_token(token)
+            user_id: str = payload.get("sub")
+            if user_id:
+                return UUID(user_id)
+        except Exception:
+            pass
+
     if settings.enable_dev_auth_bypass:
-        from uuid import UUID
-        return UUID("08c9bff2-3c05-4d5c-b6ef-abde18137538")
+        return UUID("899fd613-4e56-4921-b8f6-7fc1bf85fead")
 
-    if token is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    payload = decode_access_token(token)
-    user_id: str = payload.get("sub")
-    if user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token missing subject claim",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    try:
-        return UUID(user_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid user ID in token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Not authenticated",
+        headers={"WWW-Authenticate": "Bearer"},
+    )

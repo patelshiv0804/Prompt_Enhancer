@@ -48,15 +48,37 @@ class PromptRepository(BaseRepository[Prompt]):
         sort_order: Optional[str] = None,
     ) -> list[Prompt]:
         from app.core.config import settings
-        statement = select(Prompt)
+        statement = (
+            select(Prompt)
+            .options(
+                selectinload(Prompt.template),
+                selectinload(Prompt.ai_model),
+                selectinload(Prompt.current_version),
+            )
+        )
         if settings.enable_soft_delete:
             statement = statement.where(Prompt.deleted_at == None)
         if user_id is not None:
-            statement = statement.where(Prompt.user_id == user_id)
+            from uuid import UUID
+            try:
+                uid = UUID(user_id) if isinstance(user_id, str) else user_id
+                statement = statement.where(Prompt.user_id == uid)
+            except ValueError:
+                pass
         if template_id is not None:
-            statement = statement.where(Prompt.template_id == template_id)
+            from uuid import UUID
+            try:
+                tid = UUID(template_id) if isinstance(template_id, str) else template_id
+                statement = statement.where(Prompt.template_id == tid)
+            except ValueError:
+                pass
         if ai_model_id is not None:
-            statement = statement.where(Prompt.ai_model_id == ai_model_id)
+            from uuid import UUID
+            try:
+                mid = UUID(ai_model_id) if isinstance(ai_model_id, str) else ai_model_id
+                statement = statement.where(Prompt.ai_model_id == mid)
+            except ValueError:
+                pass
 
         # Apply sorting
         if sort_by:

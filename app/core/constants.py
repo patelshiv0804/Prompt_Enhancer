@@ -23,25 +23,22 @@ class Theme(str, Enum):
 class DefaultModel(str, Enum):
     """Available AI models."""
     CHATGPT = "chatgpt"
-    GPT4 = "gpt-4"
-    GPT5 = "gpt-5"
-    CLAUDE_SONNET = "claude-sonnet-4.5"
-    CLAUDE_OPUS = "claude-opus-4"
-    GEMINI_PRO = "gemini-pro"
-    GEMINI_FLASH = "gemini-flash"
-    GROQ_LLAMA = "groq-llama"
+    CLAUDE = "claude"
+    GEMINI = "gemini"
+    GROK = "grok"
+    MIDJOURNEY = "midjourney"
+    VEO = "veo"
+    PERPLEXITY = "perplexity"
 
 
 class DefaultMode(str, Enum):
     """Prompt mode categories."""
     GENERAL = "general"
-    YOUTUBE_SHORTS = "youtube-shorts"
-    BLOG = "blog"
-    RESEARCH = "research"
-    STORYTELLING = "storytelling"
-    CODE = "code"
+    CREATIVE = "creative"
+    TECHNICAL = "technical"
     MARKETING = "marketing"
-    EMAIL = "email"
+    CODING = "coding"
+    CODE = "code"
 
 
 # ── Default settings values ─────────────────────────────
