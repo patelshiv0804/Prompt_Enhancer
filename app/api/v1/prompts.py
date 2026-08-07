@@ -59,7 +59,7 @@ async def list_prompts(
     session: AsyncSession = Depends(get_session),
     current_user: Optional[str] = Depends(get_current_user),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=1000),
     sort_by: Optional[str] = Query(default="created_at"),
     sort_order: Optional[str] = Query(default="desc"),
     user_id: Optional[str] = Query(default=None),
@@ -78,6 +78,13 @@ async def list_prompts(
             if profile:
                 target_user_id = str(profile.id)
 
+        total_count = await prompt_service.count_prompts(
+            session=session,
+            user_id=target_user_id,
+            template_id=template_id,
+            ai_model_id=ai_model_id,
+        )
+
         prompts = await prompt_service.list_prompts(
             session=session,
             limit=limit,
@@ -93,7 +100,7 @@ async def list_prompts(
             data=[PromptSummary(**prompt.model_dump()) for prompt in prompts],
             page=page,
             page_size=page_size,
-            total=len(prompts),
+            total=total_count,
         )
     except Exception as exc:
         raise map_service_error(exc)

@@ -60,6 +60,20 @@ class PromptService:
             sort_order=sort_order,
         )
 
+    async def count_prompts(
+        self,
+        session: AsyncSession,
+        user_id: Optional[str] = None,
+        template_id: Optional[str] = None,
+        ai_model_id: Optional[str] = None,
+    ) -> int:
+        return await self.repository.count_prompts(
+            session=session,
+            user_id=user_id,
+            template_id=template_id,
+            ai_model_id=ai_model_id,
+        )
+
     async def update_prompt(self, session: AsyncSession, prompt_id: str, values: dict) -> Prompt:
         prompt = await self.get_prompt(session, prompt_id)
         return await self.repository.update(session, prompt, values)

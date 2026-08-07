@@ -95,6 +95,42 @@ class PromptRepository(BaseRepository[Prompt]):
         result = await session.execute(statement)
         return result.scalars().all()
 
+    async def count_prompts(
+        self,
+        session: AsyncSession,
+        user_id: Optional[str] = None,
+        template_id: Optional[str] = None,
+        ai_model_id: Optional[str] = None,
+    ) -> int:
+        from sqlalchemy import func
+        from app.core.config import settings
+        statement = select(func.count(Prompt.id))
+        if settings.enable_soft_delete:
+            statement = statement.where(Prompt.deleted_at == None)
+        if user_id is not None:
+            from uuid import UUID
+            try:
+                uid = UUID(user_id) if isinstance(user_id, str) else user_id
+                statement = statement.where(Prompt.user_id == uid)
+            except ValueError:
+                pass
+        if template_id is not None:
+            from uuid import UUID
+            try:
+                tid = UUID(template_id) if isinstance(template_id, str) else template_id
+                statement = statement.where(Prompt.template_id == tid)
+            except ValueError:
+                pass
+        if ai_model_id is not None:
+            from uuid import UUID
+            try:
+                mid = UUID(ai_model_id) if isinstance(ai_model_id, str) else ai_model_id
+                statement = statement.where(Prompt.ai_model_id == mid)
+            except ValueError:
+                pass
+        result = await session.execute(statement)
+        return result.scalar() or 0
+
     async def get_prompts_by_user(
         self,
         session: AsyncSession,
