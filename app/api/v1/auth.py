@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_session
 from app.schemas.auth import (
+    GoogleAuthRequest,
     MessageResponse,
     TokenResponse,
     UserLogin,
@@ -62,3 +63,19 @@ async def login(
     service = AuthService(db)
     # OAuth2PasswordRequestForm uses 'username', but we treat it as email
     return await service.login(email=form_data.username, password=form_data.password)
+
+
+@router.post(
+    "/google",
+    response_model=TokenResponse,
+    summary="Login or register with Google",
+)
+async def google_auth(
+    body: GoogleAuthRequest,
+    db: AsyncSession = Depends(get_session),
+):
+    """Exchange a verified Google ID token for the app's JWT."""
+    service = AuthService(db)
+    token = await service.authenticate_with_google(body.id_token)
+    await db.commit()
+    return token

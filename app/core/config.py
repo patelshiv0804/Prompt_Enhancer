@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     duplicate_threshold: float = 0.90
     enable_recommendations: bool = True
     enable_dev_auth_bypass: bool = False
+    google_client_id: str = ""
 
     # JWT Authentication Config
     secret_key: str = "supersecretkey_change_me_in_production"
@@ -79,6 +80,14 @@ class Settings(BaseSettings):
     @property
     def ACCESS_TOKEN_EXPIRE_MINUTES(self) -> int:
         return self.access_token_expire_minutes
+
+    @property
+    def GOOGLE_CLIENT_ID(self) -> str:
+        return self.google_client_id
+
+    @property
+    def GOOGLE_CLIENT_IDS(self) -> list[str]:
+        return [value.strip() for value in self.google_client_id.split(",") if value.strip()]
 
     model_config = SettingsConfigDict(
         env_file=".env",

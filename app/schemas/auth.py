@@ -24,6 +24,11 @@ class UserLogin(BaseModel):
     password: str
 
 
+class GoogleAuthRequest(BaseModel):
+    """Google authentication request body."""
+    id_token: str = Field(..., min_length=1)
+
+
 class OTPRequest(BaseModel):
     """Request OTP for account restore."""
     email: EmailStr

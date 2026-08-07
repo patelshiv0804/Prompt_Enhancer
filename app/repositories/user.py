@@ -37,12 +37,16 @@ class ProfileRepository:
         user_id: UUID,
         email: str,
         display_name: Optional[str] = None,
+        full_name: Optional[str] = None,
+        avatar_url: Optional[str] = None,
     ) -> Profile:
         """Create a new profile."""
         profile = Profile(
             id=user_id,
             email=email,
             display_name=display_name,
+            full_name=full_name or display_name,
+            avatar_url=avatar_url,
         )
         self.db.add(profile)
         await self.db.flush()

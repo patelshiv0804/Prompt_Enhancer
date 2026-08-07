@@ -16,6 +16,7 @@ PUBLIC_PATHS = {
     "/openapi.json",
     "/api/v1/auth/register",
     "/api/v1/auth/login",
+    "/api/v1/auth/google",
     "/api/v1/profile/restore",
     "/api/v1/profile/restore/verify",
     "/health",

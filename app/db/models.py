@@ -323,6 +323,14 @@ class User(SQLModel, table=True):
     )
     email: str = Field(sa_column=Column(String, unique=True, nullable=False, index=True))
     hashed_password: str = Field(sa_column=Column(String, nullable=False))
+    auth_provider: str = Field(
+        default="local",
+        sa_column=Column(String(length=50), nullable=False, server_default=text("'local'")),
+    )
+    google_sub: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(length=255), unique=True, nullable=True, index=True),
+    )
     is_active: bool = Field(default=True, sa_column=Column(Boolean, default=True, nullable=False))
     is_verified: bool = Field(default=False, sa_column=Column(Boolean, default=False, nullable=False))
     created_at: datetime = Field(

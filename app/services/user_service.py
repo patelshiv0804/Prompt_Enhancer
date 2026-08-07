@@ -29,12 +29,16 @@ class ProfileService:
         user_id: UUID,
         email: str,
         display_name: Optional[str] = None,
+        full_name: Optional[str] = None,
+        avatar_url: Optional[str] = None,
     ) -> Profile:
         # Create profile
         profile = await self.repository.create(
             user_id=user_id,
             email=email,
             display_name=display_name,
+            full_name=full_name,
+            avatar_url=avatar_url,
         )
         # Create default settings
         await self.settings_repository.create_defaults(user_id)

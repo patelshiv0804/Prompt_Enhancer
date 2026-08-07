@@ -27,9 +27,28 @@ class AuthRepository:
         result = await self.db.execute(select(User).where(User.email == email))
         return result.scalar_one_or_none()
 
-    async def create(self, email: str, hashed_password: str) -> User:
+    async def get_by_google_sub(self, google_sub: str) -> Optional[User]:
+        """Fetch user by Google subject identifier."""
+        result = await self.db.execute(select(User).where(User.google_sub == google_sub))
+        return result.scalar_one_or_none()
+
+    async def create(
+        self,
+        email: str,
+        hashed_password: str,
+        *,
+        is_verified: bool = False,
+        auth_provider: str = "local",
+        google_sub: Optional[str] = None,
+    ) -> User:
         """Create a new user."""
-        user = User(email=email, hashed_password=hashed_password)
+        user = User(
+            email=email,
+            hashed_password=hashed_password,
+            is_verified=is_verified,
+            auth_provider=auth_provider,
+            google_sub=google_sub,
+        )
         self.db.add(user)
         await self.db.flush()
         await self.db.refresh(user)
@@ -40,6 +59,25 @@ class AuthRepository:
         user = await self.get_by_id(user_id)
         if user:
             user.is_verified = is_verified
+            await self.db.flush()
+            await self.db.refresh(user)
+        return user
+
+    async def update_google_identity(
+        self,
+        user_id: UUID,
+        *,
+        google_sub: str,
+        is_verified: bool = True,
+        auth_provider: Optional[str] = None,
+    ) -> Optional[User]:
+        """Link or refresh Google identity metadata for an existing user."""
+        user = await self.get_by_id(user_id)
+        if user:
+            user.google_sub = google_sub
+            user.is_verified = is_verified
+            if auth_provider:
+                user.auth_provider = auth_provider
             await self.db.flush()
             await self.db.refresh(user)
         return user

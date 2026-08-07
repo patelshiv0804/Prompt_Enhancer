@@ -3,11 +3,14 @@ Auth module — Business logic for registration, login, and OTP.
 """
 
 import random
+import secrets
 import string
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
 from uuid import UUID
 
+from google.auth.transport.requests import Request
+from google.oauth2 import id_token as google_id_token
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -23,6 +26,7 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.db.models import User
 from app.repositories.authRepository import AuthRepository
 from app.schemas.auth import TokenResponse
+from app.services.user_service import ProfileService
 
 settings = get_settings()
 
@@ -58,6 +62,105 @@ class AuthService:
         token = create_access_token(data={"sub": str(user.id)})
         logger.info(f"User logged in: {user.id}")
         return TokenResponse(access_token=token, user_id=user.id)
+
+    def verify_google_token(self, raw_id_token: str) -> dict:
+        """Verify a Google ID token and return the decoded payload."""
+        audiences = settings.GOOGLE_CLIENT_IDS
+        if not audiences:
+            raise UnauthorizedException("Google sign-in is not configured on the server")
+
+        request = Request()
+        last_error: Optional[Exception] = None
+
+        for audience in audiences:
+            try:
+                payload = google_id_token.verify_oauth2_token(raw_id_token, request, audience)
+                if payload.get("email_verified") is not True:
+                    raise UnauthorizedException("Google account email is not verified")
+                return payload
+            except UnauthorizedException:
+                raise
+            except Exception as exc:
+                last_error = exc
+
+        logger.warning("Google token verification failed: %s", last_error)
+        raise UnauthorizedException("Invalid Google sign-in token")
+
+    async def authenticate_with_google(self, raw_id_token: str) -> TokenResponse:
+        """Authenticate or create a user from a Google ID token."""
+        payload = self.verify_google_token(raw_id_token)
+
+        email = payload.get("email")
+        google_sub = payload.get("sub")
+        display_name = payload.get("name")
+        avatar_url = payload.get("picture")
+
+        if not email or not google_sub:
+            raise UnauthorizedException("Google sign-in response is missing account details")
+
+        user = await self.repo.get_by_google_sub(google_sub)
+        if not user:
+            user = await self.repo.get_by_email(email)
+            if user:
+                if not user.is_active:
+                    raise UnauthorizedException("Account is deactivated")
+                user = await self.repo.update_google_identity(user.id, google_sub=google_sub, is_verified=True)
+            else:
+                generated_password = hash_password(secrets.token_urlsafe(32))
+                user = await self.repo.create(
+                    email=email,
+                    hashed_password=generated_password,
+                    is_verified=True,
+                    auth_provider="google",
+                    google_sub=google_sub,
+                )
+
+        if not user or not user.is_active:
+            raise UnauthorizedException("Account is deactivated")
+
+        await self._ensure_profile(
+            user_id=user.id,
+            email=email,
+            display_name=display_name,
+            avatar_url=avatar_url,
+        )
+
+        token = create_access_token(data={"sub": str(user.id)})
+        logger.info(f"User logged in with Google: {user.id}")
+        return TokenResponse(access_token=token, user_id=user.id)
+
+    async def _ensure_profile(
+        self,
+        *,
+        user_id: UUID,
+        email: str,
+        display_name: Optional[str],
+        avatar_url: Optional[str],
+    ) -> None:
+        """Create a profile for OAuth users or backfill missing profile details."""
+        profile_service = ProfileService(self.db)
+        profile = await profile_service.repository.get_by_id(user_id)
+
+        if not profile:
+            await profile_service.create_profile(
+                user_id=user_id,
+                email=email,
+                display_name=display_name,
+                full_name=display_name,
+                avatar_url=avatar_url,
+            )
+            return
+
+        updates = {}
+        if display_name and not profile.display_name:
+            updates["display_name"] = display_name
+        if display_name and not profile.full_name:
+            updates["full_name"] = display_name
+        if avatar_url and not profile.avatar_url:
+            updates["avatar_url"] = avatar_url
+
+        if updates:
+            await profile_service.repository.update(user_id, **updates)
 
     async def get_user(self, user_id: UUID) -> User:
         """Get user by ID."""
