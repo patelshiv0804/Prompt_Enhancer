@@ -39,7 +39,10 @@ async def verify_database_startup() -> None:
                     f"pgvector extension '{settings.pgvector_extension}' is not installed. "
                     "Vector search endpoints will not work."
                 )
-        logger.info("Database connection verified successfully.")
+            # Ensure tool_recommendations column exists in prompts table
+            await conn.execute(text("ALTER TABLE prompts ADD COLUMN IF NOT EXISTS tool_recommendations JSONB;"))
+            await conn.commit()
+        logger.info("Database connection verified successfully and schema updated.")
     except Exception as e:
         logger.warning(
             f"Could not connect to database: {e}. "

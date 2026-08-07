@@ -88,7 +88,8 @@ class PromptSimilarityService:
                 "title": prompt.title,
                 "original_prompt": prompt.original_prompt,
                 "similarity_score": sim_score,
-                "total_score": prompt.total_score,
+                "old_analysis": prompt.old_analysis,
+                "new_analysis": prompt.new_analysis,
                 "grade": prompt.grade,
                 "created_at": prompt.created_at,
             })

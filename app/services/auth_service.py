@@ -216,3 +216,74 @@ class AuthService:
         otp = self.generate_otp()
         self.store_otp(email, otp)
         return otp
+
+    # ── Password Reset via OTP ────────────────────────────
+
+    async def request_password_reset_otp(self, email: str) -> None:
+        """
+        Generate an OTP for password reset and send it via email as a background task.
+        Silently succeeds even if the email is not registered (security: no enumeration).
+        """
+        from app.utils.email_service import send_password_reset_otp_email
+
+        user = await self.repo.get_by_email(email)
+        if not user:
+            # Don't reveal whether the email exists — log and return silently
+            logger.info(f"Password reset requested for unknown email: {email}")
+            return
+
+        otp = self.generate_otp()
+        self.store_otp(email, otp)
+        logger.info(f"Password reset OTP generated for {email}")
+
+        # Send email synchronously (or swap for BackgroundTasks in the endpoint)
+        send_password_reset_otp_email(to_email=email, otp=otp)
+
+    async def verify_password_reset_otp(self, email: str, otp: str) -> str:
+        """
+        Verify the password-reset OTP and return a short-lived signed reset token.
+        Raises InvalidOTPException if the OTP is wrong or expired.
+        """
+        # Will raise InvalidOTPException on failure (one-time use — removed from store)
+        self.verify_otp(email, otp)
+
+        # Issue a short-lived JWT scoped to password-reset only
+        reset_token = create_access_token(
+            data={"sub": email, "purpose": "password_reset"},
+            expires_delta=timedelta(minutes=15),
+        )
+        logger.info(f"Password reset OTP verified for {email}; reset token issued")
+        return reset_token
+
+    async def reset_password(self, reset_token: str, new_password: str) -> None:
+        """
+        Validate the reset token and update the user's password in the database.
+        Raises UnauthorizedException if the token is invalid or not scoped for reset.
+        """
+        from jose import JWTError, jwt
+
+        try:
+            payload = jwt.decode(
+                reset_token,
+                settings.SECRET_KEY,
+                algorithms=[settings.ALGORITHM],
+            )
+        except JWTError:
+            raise UnauthorizedException("Invalid or expired password reset token")
+
+        if payload.get("purpose") != "password_reset":
+            raise UnauthorizedException("Token is not valid for password reset")
+
+        email: str = payload.get("sub", "")
+        if not email:
+            raise UnauthorizedException("Invalid reset token payload")
+
+        user = await self.repo.get_by_email(email)
+        if not user:
+            raise NotFoundException("User")
+
+        hashed = hash_password(new_password)
+        await self.repo.update_password(user.id, hashed)
+        await self.db.commit()
+        logger.info(f"Password reset successfully for user: {user.id}")
+

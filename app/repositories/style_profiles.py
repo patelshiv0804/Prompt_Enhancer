@@ -37,7 +37,7 @@ class StyleProfileRepository:
     async def get_all_styles(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[StyleProfile]:
         statement = select(StyleProfile).where(
             StyleProfile.deleted_at.is_(None)
-        ).offset(skip).limit(limit)
+        ).order_by(StyleProfile.created_at.asc(), StyleProfile.id.asc()).offset(skip).limit(limit)
         result = await db.execute(statement)
         return list(result.scalars().all())
 

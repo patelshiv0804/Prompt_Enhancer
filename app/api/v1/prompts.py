@@ -115,7 +115,8 @@ class PromptSearchMatch(BaseModel):
     title: str
     original_prompt: str
     similarity_score: float
-    total_score: Optional[float] = None
+    old_analysis: Optional[dict] = None
+    new_analysis: Optional[dict] = None
     grade: Optional[str] = None
     created_at: datetime
 
@@ -270,26 +271,29 @@ async def get_prompt(
         
         # Build normalized analysis summary for display
         analysis_data = None
-        if prompt.total_score is not None:
+        if prompt.new_analysis:
             analysis_data = {
-                "overall_score": int(prompt.total_score * 10),
+                "overall_score": prompt.new_analysis.get("overall_score", 0),
                 "grade": prompt.grade,
             }
 
-        tool_rec_summary = None
-        try:
-            tool_rec = await tool_recommendation_service.recommend(
-                prompt=prompt.original_prompt,
-                mode=prompt.title,
-            )
-            tool_rec_summary = {
-                "matched_task": tool_rec["matched_task"],
-                "match_type": tool_rec["match_type"],
-                "match_confidence": tool_rec["match_confidence"],
-                "tools": tool_rec["tools"],
-            }
-        except Exception as exc:
-            logger.warning(f"Could not calculate tool recommendations for prompt {prompt_id}: {exc}")
+        tool_rec_summary = prompt.tool_recommendations
+        if not tool_rec_summary:
+            try:
+                tool_rec = await tool_recommendation_service.recommend(
+                    prompt=prompt.original_prompt,
+                    mode=prompt.title,
+                )
+                tool_rec_summary = {
+                    "matched_task": tool_rec["matched_task"],
+                    "match_type": tool_rec["match_type"],
+                    "match_confidence": tool_rec["match_confidence"],
+                    "tools": tool_rec["tools"],
+                }
+                prompt.tool_recommendations = tool_rec_summary
+                await session.commit()
+            except Exception as exc:
+                logger.warning(f"Could not calculate tool recommendations for prompt {prompt_id}: {exc}")
 
         detail = PromptDetailResponse(
             id=prompt.id,
@@ -299,7 +303,8 @@ async def get_prompt(
             ai_model=AIModelSummary(**prompt.ai_model.model_dump()) if prompt.ai_model else None,
             current_version=PromptVersionSummary(**prompt.current_version.model_dump()) if prompt.current_version else None,
             version_count=len(prompt.versions) if prompt.versions else 0,
-            total_score=prompt.total_score,
+            old_analysis=prompt.old_analysis,
+            new_analysis=prompt.new_analysis,
             grade=prompt.grade,
             analysis=analysis_data,
             tool_recommendations=tool_rec_summary,

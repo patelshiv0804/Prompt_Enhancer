@@ -155,21 +155,7 @@ async def enhance_prompt(
         # 4. Compare prompts
         comparison = await comparison_service.compare(payload.prompt, enhanced_text)
 
-        # 5. Persist to database in a single transaction
-        grade_after = comparison["summary"]["grade_improvement"].split(" to ")[-1]
-        prompt_record = await persistence_service.create_prompt_with_version(
-            session=session,
-            user_id=str(profile.id),
-            original_prompt=payload.prompt,
-            enhanced_prompt=enhanced_text,
-            template_id=enhance_res["template_id"],
-            total_score=comparison["summary"]["after_score"],
-            grade=grade_after,
-            title=f"{payload.role} - {payload.mode}",
-        )
-        await session.commit()
-
-        # 6. Get AI tool recommendations (safe — never breaks core pipeline)
+        # 5. Get AI tool recommendations (safe — never breaks core pipeline)
         try:
             tool_rec = await tool_recommendation_service.recommend(
                 prompt=payload.prompt,
@@ -186,6 +172,22 @@ async def enhance_prompt(
             match_confidence=tool_rec["match_confidence"],
             tools=[ToolEntry(**t) for t in tool_rec["tools"]],
         )
+
+        # 6. Persist to database in a single transaction
+        grade_after = comparison["summary"]["grade_improvement"].split(" to ")[-1]
+        prompt_record = await persistence_service.create_prompt_with_version(
+            session=session,
+            user_id=str(profile.id),
+            original_prompt=payload.prompt,
+            enhanced_prompt=enhanced_text,
+            template_id=enhance_res["template_id"],
+            old_analysis=orig_analysis,
+            new_analysis=enh_analysis,
+            grade=grade_after,
+            title=f"{payload.role} - {payload.mode}",
+            tool_recommendations=tool_rec_summary.model_dump(),
+        )
+        await session.commit()
 
         # Build paginated/normalized data
         data = EnhancePromptData(

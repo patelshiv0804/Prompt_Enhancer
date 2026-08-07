@@ -139,8 +139,12 @@ class ProfileService:
         prompts = list(prompt_res.scalars().all())
         total_prompts = len(prompts)
 
-        # Compute average score from prompts that have a total_score
-        scored = [p.total_score for p in prompts if p.total_score is not None]
+        # Compute average score from prompts that have a new_analysis score
+        scored = [
+            p.new_analysis["overall_score"]
+            for p in prompts
+            if p.new_analysis and isinstance(p.new_analysis, dict) and "overall_score" in p.new_analysis
+        ]
         average_score = round(sum(scored) / len(scored), 1) if scored else 0.0
 
         # Compute streak_days — consecutive days with at least one prompt

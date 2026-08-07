@@ -53,15 +53,8 @@ class StyleProfileService:
         return await StyleProfileRepository.soft_delete_style(self.db, style)
 
     async def activate_style(self, id: uuid.UUID) -> StyleProfile:
-        """SP06 - Activate style profile. Ensures only ONE style profile of the same type is active."""
+        """SP06 - Activate style profile. Allows user to activate multiple style profiles independently."""
         style = await self.get_style(id)
-        
-        # Find other active style profiles of the same type
-        active_styles = await StyleProfileRepository.get_active_styles(self.db)
-        for s in active_styles:
-            if s.type == style.type and s.id != style.id:
-                await StyleProfileRepository.deactivate_style(self.db, s)
-                
         return await StyleProfileRepository.activate_style(self.db, style)
 
     async def deactivate_style(self, id: uuid.UUID) -> StyleProfile:

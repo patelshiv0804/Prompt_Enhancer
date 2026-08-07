@@ -42,8 +42,10 @@ class PromptPersistenceService:
         template_id: Optional[str] = None,
         ai_model_id: Optional[str] = None,
         title: Optional[str] = None,
-        total_score: Optional[float] = None,
+        old_analysis: Optional[dict] = None,
+        new_analysis: Optional[dict] = None,
         grade: Optional[str] = None,
+        tool_recommendations: Optional[dict] = None,
     ) -> Prompt:
         logger.info("Creating new prompt in database")
         try:
@@ -54,8 +56,10 @@ class PromptPersistenceService:
                 template_id=template_id,
                 ai_model_id=ai_model_id,
                 title=title,
-                total_score=total_score,
+                old_analysis=old_analysis,
+                new_analysis=new_analysis,
                 grade=grade,
+                tool_recommendations=tool_recommendations,
             )
             prompt_id = prompt.id
             prompt = await self.prompt_repository.create(session, prompt)

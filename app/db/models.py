@@ -205,8 +205,10 @@ class Prompt(SQLModel, table=True):
         ),
     )
     embedding: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(384), nullable=True))
-    total_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
+    old_analysis: Optional[dict] = Field(default=None, sa_column=Column(JSONB, nullable=True))
+    new_analysis: Optional[dict] = Field(default=None, sa_column=Column(JSONB, nullable=True))
     grade: Optional[str] = Field(default=None, sa_column=Column(String(length=16), nullable=True))
+    tool_recommendations: Optional[dict] = Field(default=None, sa_column=Column(JSONB, nullable=True))
     deleted_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 
     profile: Optional[Profile] = Relationship(back_populates="prompts")

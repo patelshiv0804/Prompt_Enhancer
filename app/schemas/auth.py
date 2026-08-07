@@ -40,6 +40,28 @@ class OTPVerify(BaseModel):
     otp: str = Field(..., min_length=6, max_length=6)
 
 
+class ForgotPasswordRequest(BaseModel):
+    """Request OTP for password reset."""
+    email: EmailStr
+
+
+class VerifyResetOTPRequest(BaseModel):
+    """Verify OTP submitted by the user for password reset."""
+    email: EmailStr
+    otp: str = Field(..., min_length=6, max_length=6)
+
+
+class VerifyResetOTPResponse(BaseModel):
+    """Short-lived reset token returned after OTP is verified."""
+    reset_token: str
+
+
+class ResetPasswordRequest(BaseModel):
+    """Set a new password using the reset token issued after OTP verification."""
+    reset_token: str
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
 # ── Response Schemas ─────────────────────────────────────
 
 class TokenResponse(BaseModel):

@@ -131,7 +131,7 @@ class PromptRegenerationService:
             grade_after = analysis["grade"]
             overall_score_scaled = analysis["overall_score"]
             
-            prompt.total_score = float(overall_score_scaled)
+            prompt.new_analysis = analysis
             prompt.grade = grade_after
             await self.prompt_repository.update(session, prompt, {})
             await session.flush()

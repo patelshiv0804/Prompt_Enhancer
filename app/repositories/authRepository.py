@@ -86,3 +86,12 @@ class AuthRepository:
         """Check if a user with the given email already exists."""
         result = await self.db.execute(select(User.id).where(User.email == email))
         return result.scalar_one_or_none() is not None
+
+    async def update_password(self, user_id: UUID, hashed_password: str) -> Optional[User]:
+        """Update the user's hashed password (used after OTP-verified password reset)."""
+        user = await self.get_by_id(user_id)
+        if user:
+            user.hashed_password = hashed_password
+            await self.db.flush()
+            await self.db.refresh(user)
+        return user

@@ -291,19 +291,22 @@ SAMPLE_PROMPTS = [
     {
         "title": "Explain async/await in Python",
         "original_prompt": "Explain how async and await work in Python with a real-world example.",
-        "total_score": 72.5,
+        "old_analysis": {"overall_score": 35, "dimensions": {"clarity": {"score": 35}, "context": {"score": 25}, "role_definition": {"score": 14}, "output_format": {"score": 28}, "constraints": {"score": 21}, "examples": {"score": 18}}},
+        "new_analysis": {"overall_score": 73, "dimensions": {"clarity": {"score": 80}, "context": {"score": 75}, "role_definition": {"score": 70}, "output_format": {"score": 72}, "constraints": {"score": 68}, "examples": {"score": 65}}},
         "grade": "B",
     },
     {
         "title": "Write a landing page headline",
         "original_prompt": "Write a compelling headline for a SaaS product that helps developers write better prompts.",
-        "total_score": 85.0,
+        "old_analysis": {"overall_score": 40, "dimensions": {"clarity": {"score": 45}, "context": {"score": 35}, "role_definition": {"score": 20}, "output_format": {"score": 30}, "constraints": {"score": 25}, "examples": {"score": 20}}},
+        "new_analysis": {"overall_score": 85, "dimensions": {"clarity": {"score": 90}, "context": {"score": 85}, "role_definition": {"score": 88}, "output_format": {"score": 82}, "constraints": {"score": 78}, "examples": {"score": 75}}},
         "grade": "A",
     },
     {
         "title": "Summarise quarterly sales data",
         "original_prompt": "Summarise the key trends from Q3 2024 sales data and suggest improvements for Q4.",
-        "total_score": 68.0,
+        "old_analysis": {"overall_score": 30, "dimensions": {"clarity": {"score": 30}, "context": {"score": 25}, "role_definition": {"score": 15}, "output_format": {"score": 20}, "constraints": {"score": 18}, "examples": {"score": 15}}},
+        "new_analysis": {"overall_score": 68, "dimensions": {"clarity": {"score": 70}, "context": {"score": 65}, "role_definition": {"score": 68}, "output_format": {"score": 65}, "constraints": {"score": 60}, "examples": {"score": 58}}},
         "grade": "C",
     },
 ]
@@ -422,7 +425,8 @@ async def seed(session: AsyncSession) -> None:
             title=p["title"],
             original_prompt=p["original_prompt"],
             current_version_id=None,
-            total_score=p["total_score"],
+            old_analysis=p["old_analysis"],
+            new_analysis=p["new_analysis"],
             grade=p["grade"],
         )
         session.add(prompt)
