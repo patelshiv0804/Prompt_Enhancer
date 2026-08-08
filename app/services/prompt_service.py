@@ -80,10 +80,6 @@ class PromptService:
 
     async def delete_prompt(self, session: AsyncSession, prompt_id: str) -> None:
         prompt = await self.get_prompt(session, prompt_id)
-        from app.core.config import settings
-        from datetime import datetime, timezone
-        if settings.enable_soft_delete:
-            prompt.deleted_at = datetime.now(timezone.utc)
-            await self.repository.update(session, prompt, {})
-        else:
-            await self.repository.delete(session, prompt)
+        # Vault deletion is permanent. PostgreSQL cascades the delete to the
+        # prompt's versions through prompt_versions.prompt_id.
+        await self.repository.delete(session, prompt)

@@ -387,7 +387,7 @@ async def restore_prompt_version(
     "/{prompt_id}",
     response_model=APIResponse[None],
     summary="Delete Prompt",
-    description="Deletes a prompt. Applies a soft delete (timestamp update) if enabled by configuration.",
+    description="Permanently deletes a prompt and its version history.",
 )
 async def delete_prompt(
     prompt_id: str,

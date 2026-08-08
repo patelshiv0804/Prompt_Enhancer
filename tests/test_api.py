@@ -106,6 +106,20 @@ async def test_prompts_crud_endpoints(client, db_session):
         embedding=[0.03] * 384,
     )
     db_session.add(prompt)
+    await db_session.flush()
+
+    version = PromptVersion(
+        prompt_id=prompt.id,
+        version_number=1,
+        version_type="initial",
+        content="Solve linear programming.",
+        change_summary="Seed version for delete coverage.",
+    )
+    db_session.add(version)
+    await db_session.flush()
+
+    prompt.current_version_id = version.id
+    db_session.add(prompt)
     await db_session.commit()
 
     headers = {"X-Current-User": profile.email}
@@ -121,14 +135,18 @@ async def test_prompts_crud_endpoints(client, db_session):
     data = res.json()
     assert len(data["data"]) >= 1
 
-    # 3. Soft Delete
+    # 3. Hard delete
     res = await client.delete(f"/api/v1/prompts/{prompt.id}", headers=headers)
     assert res.status_code == 200
     assert res.json()["success"] is True
 
-    # 4. Confirm soft-delete hides prompt
+    # 4. Confirm the record was removed from the database
     res = await client.get(f"/api/v1/prompts/{prompt.id}", headers=headers)
     assert res.status_code == 404
+    deleted_prompt = (await db_session.execute(select(Prompt).where(Prompt.id == prompt.id))).scalar_one_or_none()
+    assert deleted_prompt is None
+    deleted_version = (await db_session.execute(select(PromptVersion).where(PromptVersion.prompt_id == prompt.id))).scalars().first()
+    assert deleted_version is None
 
 
 @pytest.mark.asyncio

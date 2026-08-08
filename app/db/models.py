@@ -216,7 +216,10 @@ class Prompt(SQLModel, table=True):
     ai_model: Optional[AIModel] = Relationship(back_populates="prompts")
     versions: List["PromptVersion"] = Relationship(
         back_populates="prompt",
-        sa_relationship_kwargs={"foreign_keys": "[PromptVersion.prompt_id]"},
+        sa_relationship_kwargs={
+            "foreign_keys": "[PromptVersion.prompt_id]",
+            "passive_deletes": True,
+        },
     )
     current_version: Optional["PromptVersion"] = Relationship(
         back_populates="current_for_prompt",
