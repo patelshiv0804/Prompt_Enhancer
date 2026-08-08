@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+from typing import Optional
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.template import TemplateRepository
 from app.db.models import Template
@@ -16,7 +18,7 @@ class CandidateTemplateService:
         session: AsyncSession,
         vector: list[float],
         role: str,
-        mode: str,
+        mode: Optional[str] = None,
         limit: int = 100,
     ) -> list[tuple[Template, float]]:
         logger.info("Retrieving candidate templates for resolved role=%s mode=%s", role, mode)

@@ -107,3 +107,14 @@ class TemplateRepository(BaseRepository[Template]):
         statement = select(Template.mode).distinct().where(Template.is_approved == True)
         result = await session.execute(statement)
         return [m for m in result.scalars().all() if m]
+
+    async def get_distinct_modes_for_role(self, session: AsyncSession, role: str) -> list[str]:
+        from sqlalchemy import func
+        statement = (
+            select(Template.mode)
+            .distinct()
+            .where(Template.is_approved == True)
+            .where(func.lower(Template.role) == func.lower(role))
+        )
+        result = await session.execute(statement)
+        return [m for m in result.scalars().all() if m]

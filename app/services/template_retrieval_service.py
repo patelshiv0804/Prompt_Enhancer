@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Optional
+from typing import Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -19,6 +19,16 @@ from app.services.exceptions import (
 )
 
 logger = logging.getLogger("promptiq.template_retrieval")
+
+
+def _find_exact_match(value: Optional[str], candidates: list[str]) -> Optional[str]:
+    if not value or not value.strip():
+        return None
+    normalized = value.strip().lower()
+    for candidate in candidates:
+        if candidate.strip().lower() == normalized:
+            return candidate
+    return None
 
 
 class TemplateRetrievalService:
@@ -66,45 +76,66 @@ class TemplateRetrievalService:
         distinct_roles = await self.repository.get_distinct_roles(session)
         distinct_modes = await self.repository.get_distinct_modes(session)
 
-        # Intent inference if role or mode is missing
         original_role = role
         original_mode = mode
         inferred_role = None
         inferred_mode = None
 
-        if (not role or not role.strip()) or (not mode or not mode.strip()):
+        # If role is absent, use the existing intent flow to infer a parent role first.
+        if not role or not role.strip():
             if self.intent_service:
                 inferred = await self.intent_service.analyze_intent(
                     prompt=prompt,
                     variables=variables,
-                    provided_role=role,
+                    provided_role=None,
                     provided_mode=mode,
                     distinct_roles=distinct_roles,
                     distinct_modes=distinct_modes,
                 )
                 inferred_role = inferred.get("inferred_role")
                 inferred_mode = inferred.get("inferred_mode")
-                
-            role = role or inferred_role
-            mode = mode or inferred_mode
+            role = inferred_role
 
-        # If still missing after inference, fallback to first available
+        # Resolve role before mode. Role is the parent category; mode choices are scoped under it.
         if not role or not role.strip():
             role = distinct_roles[0] if distinct_roles else "Marketer"
-        if not mode or not mode.strip():
-            mode = distinct_modes[0] if distinct_modes else "Market Research"
 
-        # Semantic Role Resolution
         resolved_role = role
         role_similarity = 1.0
-        if self.role_resolver:
+        exact_role = _find_exact_match(role, distinct_roles)
+        if exact_role:
+            resolved_role = exact_role
+        elif self.role_resolver:
             resolved_role, role_similarity = await self.role_resolver.resolve_role(role, distinct_roles)
 
-        # Semantic Mode Resolution
+        role_modes = await self.repository.get_distinct_modes_for_role(session, resolved_role)
+        if not role_modes:
+            role_modes = distinct_modes
+
+        # If mode is absent, infer it from only the modes available under the resolved role.
+        if not mode or not mode.strip():
+            mode = inferred_mode
+            if (not mode or not mode.strip()) and self.intent_service:
+                inferred = await self.intent_service.analyze_intent(
+                    prompt=prompt,
+                    variables=variables,
+                    provided_role=resolved_role,
+                    provided_mode=None,
+                    distinct_roles=[resolved_role],
+                    distinct_modes=role_modes,
+                )
+                mode = inferred.get("inferred_mode")
+
+        if not mode or not mode.strip():
+            mode = role_modes[0] if role_modes else "Market Research"
+
         resolved_mode = mode
         mode_similarity = 1.0
-        if self.mode_resolver:
-            resolved_mode, mode_similarity = await self.mode_resolver.resolve_mode(mode, distinct_modes)
+        exact_mode = _find_exact_match(mode, role_modes)
+        if exact_mode:
+            resolved_mode = exact_mode
+        elif self.mode_resolver:
+            resolved_mode, mode_similarity = await self.mode_resolver.resolve_mode(mode, role_modes)
 
         # Generate temporary embedding for the user prompt
         emb_start = time.perf_counter()

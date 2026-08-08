@@ -1,5 +1,6 @@
 import pytest
 from datetime import datetime, timezone, timedelta
+from uuid import uuid4
 from sqlmodel import select
 
 from app.db.models import AIModel, Profile, Template, Prompt, PromptVersion
@@ -262,6 +263,163 @@ async def test_semantic_resolution_and_intent_services(db_session):
     )
     assert res is not None
     assert res["selected_template"]["title"] == "QA Market Research Assistant"
+
+
+@pytest.mark.asyncio
+async def test_template_retrieval_uses_exact_role_mode_pair():
+    from app.services.ranking_service import RankingService
+    from app.services.template_retrieval_service import TemplateRetrievalService
+
+    class FakeEmbeddingService:
+        def generate_for_prompt(self, prompt: str) -> list[float]:
+            return [1.0]
+
+    class FakeTemplateRepository:
+        def __init__(self) -> None:
+            self.search_calls = []
+            self.templates = [
+                Template(
+                    title="Exact Marketing Research",
+                    body="Marketing template: {prompt}",
+                    role="Marketer",
+                    mode="Market Research",
+                    ai_model_id=uuid4(),
+                    embedding=[1.0],
+                    is_approved=True,
+                ),
+                Template(
+                    title="Writer Research",
+                    body="Writer template: {prompt}",
+                    role="Writer",
+                    mode="Market Research",
+                    ai_model_id=uuid4(),
+                    embedding=[1.0],
+                    is_approved=True,
+                ),
+            ]
+
+        async def get_distinct_roles(self, session):
+            return ["Marketer", "Writer"]
+
+        async def get_distinct_modes(self, session):
+            return ["Market Research"]
+
+        async def get_distinct_modes_for_role(self, session, role: str):
+            return [t.mode for t in self.templates if t.role == role]
+
+        async def search_templates_with_vector(self, session, vector, role=None, mode=None, is_approved=None, limit=100):
+            self.search_calls.append({"role": role, "mode": mode})
+            return [
+                (template, 0.99)
+                for template in self.templates
+                if template.role == role and template.mode == mode
+            ]
+
+    repo = FakeTemplateRepository()
+    retrieval_service = TemplateRetrievalService(
+        repository=repo,
+        ranking_service=RankingService(),
+        embedding_service=FakeEmbeddingService(),
+    )
+
+    res = await retrieval_service.retrieve_best_template(
+        session=None,
+        role="Marketer",
+        mode="Market Research",
+        prompt="Find customer segments for my SaaS.",
+    )
+
+    assert res["selected_template"]["title"] == "Exact Marketing Research"
+    assert repo.search_calls[-1] == {"role": "Marketer", "mode": "Market Research"}
+
+
+@pytest.mark.asyncio
+async def test_template_retrieval_resolves_mode_inside_resolved_role():
+    from app.services.ranking_service import RankingService
+    from app.services.template_retrieval_service import TemplateRetrievalService
+
+    class FakeEmbeddingService:
+        def generate_for_prompt(self, prompt: str) -> list[float]:
+            return [1.0]
+
+    class FakeRoleResolver:
+        async def resolve_role(self, role: str, distinct_roles: list[str]):
+            return "Marketer", 0.93
+
+    class FakeModeResolver:
+        def __init__(self) -> None:
+            self.candidate_modes = None
+
+        async def resolve_mode(self, mode: str, distinct_modes: list[str]):
+            self.candidate_modes = distinct_modes
+            return "SEO", 0.91
+
+    class FakeIntentService:
+        async def analyze_intent(self, **kwargs):
+            return {"inferred_role": kwargs.get("provided_role"), "inferred_mode": "Screenplay"}
+
+    class FakeTemplateRepository:
+        def __init__(self) -> None:
+            self.search_calls = []
+            self.templates = [
+                Template(
+                    title="Marketing SEO",
+                    body="SEO template: {prompt}",
+                    role="Marketer",
+                    mode="SEO",
+                    ai_model_id=uuid4(),
+                    embedding=[1.0],
+                    is_approved=True,
+                ),
+                Template(
+                    title="Writer Screenplay",
+                    body="Screenplay template: {prompt}",
+                    role="Writer",
+                    mode="Screenplay",
+                    ai_model_id=uuid4(),
+                    embedding=[1.0],
+                    is_approved=True,
+                ),
+            ]
+
+        async def get_distinct_roles(self, session):
+            return ["Marketer", "Writer"]
+
+        async def get_distinct_modes(self, session):
+            return ["SEO", "Screenplay"]
+
+        async def get_distinct_modes_for_role(self, session, role: str):
+            return [t.mode for t in self.templates if t.role == role]
+
+        async def search_templates_with_vector(self, session, vector, role=None, mode=None, is_approved=None, limit=100):
+            self.search_calls.append({"role": role, "mode": mode})
+            return [
+                (template, 0.99)
+                for template in self.templates
+                if template.role == role and template.mode == mode
+            ]
+
+    repo = FakeTemplateRepository()
+    mode_resolver = FakeModeResolver()
+    retrieval_service = TemplateRetrievalService(
+        repository=repo,
+        ranking_service=RankingService(),
+        embedding_service=FakeEmbeddingService(),
+        intent_service=FakeIntentService(),
+        role_resolver=FakeRoleResolver(),
+        mode_resolver=mode_resolver,
+    )
+
+    res = await retrieval_service.retrieve_best_template(
+        session=None,
+        role="growth specialist",
+        mode=None,
+        prompt="Improve landing page search traffic.",
+    )
+
+    assert mode_resolver.candidate_modes == ["SEO"]
+    assert repo.search_calls[-1] == {"role": "Marketer", "mode": "SEO"}
+    assert res["selected_template"]["title"] == "Marketing SEO"
 
 
 @pytest.mark.asyncio
