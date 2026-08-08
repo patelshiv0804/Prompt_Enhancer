@@ -20,8 +20,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    with op.batch_alter_table('prompts', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('tool_recommendations', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
+    # This column may already exist in databases where the model/schema was
+    # created before this migration was introduced.  PostgreSQL supports an
+    # idempotent add, so Alembic can still advance its revision history.
+    op.execute(
+        "ALTER TABLE prompts "
+        "ADD COLUMN IF NOT EXISTS tool_recommendations JSONB"
+    )
 
 
 def downgrade() -> None:
