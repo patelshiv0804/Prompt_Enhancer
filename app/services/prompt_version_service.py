@@ -43,6 +43,10 @@ class PromptVersionService:
         content: str,
         version_type: str,
         change_summary: Optional[str] = None,
+        old_analysis: Optional[dict] = None,
+        new_analysis: Optional[dict] = None,
+        tool_recommendations: Optional[dict] = None,
+        template_id: Optional[str] = None,
     ) -> PromptVersion:
         logger.info("Creating version for prompt_id=%s", prompt.id)
         if not content or not content.strip():
@@ -65,6 +69,10 @@ class PromptVersionService:
             version_type=version_type,
             content=content,
             change_summary=change_summary,
+            old_analysis=old_analysis,
+            new_analysis=new_analysis,
+            tool_recommendations=tool_recommendations,
+            template_id=template_id,
         )
 
         version_id = version.id
@@ -84,6 +92,7 @@ class PromptVersionService:
 
         logger.info("Successfully created version %d (ID: %s)", version_num, version_id)
         return version
+
 
     async def restore_version(
         self,

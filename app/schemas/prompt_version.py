@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -26,6 +26,11 @@ class PromptVersionRead(PromptVersionBase):
     prompt_id: UUID
     created_at: datetime
     updated_at: datetime
+    # Per-version scores (nullable for legacy versions created before this feature)
+    old_analysis: Optional[dict[str, Any]] = None
+    new_analysis: Optional[dict[str, Any]] = None
+    tool_recommendations: Optional[dict[str, Any]] = None
+    template_id: Optional[UUID] = None
 
 
 class PromptVersionSummary(BaseModel):
@@ -35,7 +40,36 @@ class PromptVersionSummary(BaseModel):
     content: Optional[str] = None
     change_summary: Optional[str] = None
     created_at: datetime
+    # Per-version scores (nullable for legacy versions)
+    old_analysis: Optional[dict[str, Any]] = None
+    new_analysis: Optional[dict[str, Any]] = None
+    tool_recommendations: Optional[dict[str, Any]] = None
+    template_id: Optional[UUID] = None
 
 
 class PromptVersionRestoreRequest(BaseModel):
     version_id: UUID
+
+
+# ── Re-enhance response schemas ──────────────────────────────────────────────
+
+class ReenhanceAnalysisSummary(BaseModel):
+    overall_score: int
+    grade: str
+
+
+class ReenhanceVersionData(BaseModel):
+    prompt_id: UUID
+    version_id: UUID
+    version_number: int
+    enhanced_prompt: str
+    template_id: Optional[str] = None
+    old_analysis: Optional[dict[str, Any]] = None
+    new_analysis: Optional[dict[str, Any]] = None
+    tool_recommendations: Optional[dict[str, Any]] = None
+
+
+class ReenhanceVersionResponse(BaseModel):
+    success: bool
+    message: str
+    data: ReenhanceVersionData

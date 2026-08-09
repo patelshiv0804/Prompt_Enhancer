@@ -21,6 +21,7 @@ from app.api.v1.deps import (
     get_prompt_recommendation_service,
     get_prompt_search_service,
     get_prompt_regeneration_service,
+    get_prompt_reenhance_service,
     get_tool_recommendation_service,
 )
 from app.services.tool_recommendation_service import ToolRecommendationService
@@ -35,9 +36,10 @@ from app.schemas.prompt import (
     RegeneratePromptRequest,
     RegeneratePromptResponse,
 )
-from app.schemas.prompt_version import PromptVersionSummary
+from app.schemas.prompt_version import PromptVersionSummary, ReenhanceVersionResponse
 from app.services.prompt_service import PromptService
 from app.services.prompt_regeneration_service import PromptRegenerationService
+from app.services.prompt_reenhance_service import PromptReenhanceService
 from app.services.prompt_history_service import PromptHistoryService
 from app.services.prompt_version_service import PromptVersionService
 from app.services.prompt_similarity_service import PromptSimilarityService
@@ -466,5 +468,31 @@ async def regenerate_prompt(
             feedback=feedback,
         )
         return RegeneratePromptResponse(**result)
+    except Exception as exc:
+        raise map_service_error(exc)
+
+
+@router.post(
+    "/{prompt_id}/reenhance",
+    response_model=ReenhanceVersionResponse,
+    summary="Re-enhance Prompt",
+    description=(
+        "Generates a new enhanced version by taking the latest version's content "
+        "and passing it through the same template used in the original enhancement. "
+        "Stores the new version in prompt_versions with per-version quality scores. "
+        "Does NOT modify the prompts table beyond updating current_version_id."
+    ),
+)
+async def reenhance_prompt(
+    prompt_id: str,
+    session: AsyncSession = Depends(get_session),
+    reenhance_service: PromptReenhanceService = Depends(get_prompt_reenhance_service),
+) -> ReenhanceVersionResponse:
+    try:
+        result = await reenhance_service.reenhance_prompt(
+            session=session,
+            prompt_id=prompt_id,
+        )
+        return ReenhanceVersionResponse(**result)
     except Exception as exc:
         raise map_service_error(exc)

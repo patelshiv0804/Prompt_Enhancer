@@ -255,6 +255,14 @@ class PromptVersion(SQLModel, table=True):
     version_type: Optional[str] = Field(default=None, sa_column=Column(String(length=100), nullable=True))
     content: str = Field(sa_column=Column(Text, nullable=False))
     change_summary: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    # Per-version quality scores -- populated when this version was created via re-enhance
+    old_analysis: Optional[dict] = Field(default=None, sa_column=Column(JSONB, nullable=True))
+    new_analysis: Optional[dict] = Field(default=None, sa_column=Column(JSONB, nullable=True))
+    tool_recommendations: Optional[dict] = Field(default=None, sa_column=Column(JSONB, nullable=True))
+    template_id: Optional[UUID] = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("templates.id", ondelete="SET NULL"), nullable=True),
+    )
 
     prompt: Optional[Prompt] = Relationship(
         back_populates="versions",

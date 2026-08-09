@@ -102,6 +102,7 @@ from app.services.prompt_persistence_service import PromptPersistenceService
 from app.services.prompt_history_service import PromptHistoryService
 from app.services.prompt_service import PromptService
 from app.services.prompt_regeneration_service import PromptRegenerationService
+from app.services.prompt_reenhance_service import PromptReenhanceService
 from app.services.intent_analysis_service import IntentAnalysisService
 from app.services.role_resolution_service import RoleResolutionService
 from app.services.mode_resolution_service import ModeResolutionService
@@ -201,6 +202,29 @@ def get_prompt_regeneration_service(
         prompt_embedding_service=emb_service,
         analysis_service=analysis,
         llm_provider=llm,
+        enhancement_service=enhancement,
+    )
+
+def get_prompt_reenhance_service(
+    prompt_repo: PromptRepository = Depends(get_prompt_repository),
+    template_repo: TemplateRepository = Depends(get_template_repository),
+    version_repo: PromptVersionRepository = Depends(get_prompt_version_repository),
+    version_service: PromptVersionService = Depends(get_prompt_version_service),
+    emb_service: PromptEmbeddingService = Depends(get_prompt_embedding_service),
+    analysis: PromptAnalysisService = Depends(get_prompt_analysis_service),
+    enhancement: PromptEnhancementService = Depends(get_prompt_enhancement_service),
+    emb: EmbeddingService = Depends(get_embedding_service),
+) -> PromptReenhanceService:
+    from app.services.tool_recommendation_service import ToolRecommendationService
+    tool_rec = ToolRecommendationService(embedding_service=emb)
+    return PromptReenhanceService(
+        prompt_repository=prompt_repo,
+        template_repository=template_repo,
+        prompt_version_repository=version_repo,
+        prompt_version_service=version_service,
+        prompt_embedding_service=emb_service,
+        analysis_service=analysis,
+        tool_recommendation_service=tool_rec,
         enhancement_service=enhancement,
     )
 
