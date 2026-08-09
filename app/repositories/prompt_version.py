@@ -24,7 +24,7 @@ class PromptVersionRepository(BaseRepository[PromptVersion]):
         statement = (
             select(PromptVersion)
             .where(PromptVersion.prompt_id == prompt_id)
-            .order_by(PromptVersion.version_number.desc())
+            .order_by(PromptVersion.version_number.asc())
             .limit(limit)
             .offset(offset)
         )
