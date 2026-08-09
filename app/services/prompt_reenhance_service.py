@@ -95,12 +95,29 @@ class PromptReenhanceService:
 
         input_text = latest_version.content
 
-        # ── 4. Analyze the INPUT (this becomes old_analysis for the new version)
-        try:
-            old_analysis = await self.analysis_service.analyze(input_text)
-        except Exception as exc:
-            logger.exception("Analysis of input text failed during re-enhancement")
-            raise PromptVersionException("Failed to analyse input prompt.") from exc
+        # ── 4. old_analysis for the new version ────────────────────────────────
+        # For ANY version, the previous version's new_analysis IS the starting score.
+        # Carry it forward; only compute fresh when it is absent.
+        if latest_version.new_analysis:
+            old_analysis = latest_version.new_analysis
+            logger.info(
+                "Re-using new_analysis from v%d as old_analysis for re-enhancement.",
+                latest_version.version_number,
+            )
+        elif prompt.new_analysis:
+            old_analysis = prompt.new_analysis
+            logger.info(
+                "Re-using new_analysis from prompt table as old_analysis for re-enhancement."
+            )
+        else:
+            logger.info(
+                "No cached new_analysis available — computing old_analysis from input text."
+            )
+            try:
+                old_analysis = await self.analysis_service.analyze(input_text)
+            except Exception as exc:
+                logger.exception("Analysis of input text failed during re-enhancement")
+                raise PromptVersionException("Failed to analyse input prompt.") from exc
 
         # ── 5. Run enhancement using the pre-selected template ────────────────
         llm_start = time.perf_counter()
@@ -125,22 +142,41 @@ class PromptReenhanceService:
             raise PromptVersionException("Failed to analyse enhanced prompt.") from exc
 
         # ── 7. Get tool recommendations ───────────────────────────────────────
-        try:
-            tool_rec = await self.tool_recommendation_service.recommend(
-                prompt=input_text,
-                mode=template.mode,
-                role=template.role,
+        # • Version 1: the recommendations are stored on the version row (with fallback to prompts table)
+        # • Version 2+: carry forward from the previous version when present.
+        # In both cases fall back to a fresh recommendation call only when absent.
+        if latest_version.version_number == 1 and (latest_version.tool_recommendations or prompt.tool_recommendations):
+            tool_rec_dict = latest_version.tool_recommendations or prompt.tool_recommendations
+            logger.info(
+                "v1 re-enhancement: using tool_recommendations for prompt_id=%s.",
+                prompt_id,
             )
-        except Exception:
-            logger.warning("Tool recommendation failed during re-enhancement — using fallback")
-            tool_rec = self.tool_recommendation_service.get_fallback()
+        elif latest_version.version_number != 1 and latest_version.tool_recommendations:
+            tool_rec_dict = latest_version.tool_recommendations
+            logger.info(
+                "Carrying forward tool_recommendations from v%d.",
+                latest_version.version_number,
+            )
+        else:
+            logger.info(
+                "No cached tool_recommendations available — computing fresh recommendations."
+            )
+            try:
+                tool_rec = await self.tool_recommendation_service.recommend(
+                    prompt=input_text,
+                    mode=template.mode,
+                    role=template.role,
+                )
+            except Exception:
+                logger.warning("Tool recommendation failed during re-enhancement — using fallback")
+                tool_rec = self.tool_recommendation_service.get_fallback()
 
-        tool_rec_dict = {
-            "matched_task": tool_rec["matched_task"],
-            "match_type": tool_rec.get("match_type", "fallback"),
-            "match_confidence": tool_rec.get("match_confidence", 0.5),
-            "tools": tool_rec["tools"],
-        }
+            tool_rec_dict = {
+                "matched_task": tool_rec["matched_task"],
+                "match_type": tool_rec.get("match_type", "fallback"),
+                "match_confidence": tool_rec.get("match_confidence", 0.5),
+                "tools": tool_rec["tools"],
+            }
 
         # ── 8. Persist new version ────────────────────────────────────────────
         emb_start = time.perf_counter()

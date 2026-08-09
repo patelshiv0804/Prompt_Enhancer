@@ -56,8 +56,8 @@ class PromptEnhancementService:
         # STEP 1: Validate request parameters
         if not prompt or not prompt.strip():
             raise PromptValidationException("Prompt content cannot be empty.")
-        if len(prompt) > 4000:
-            raise PromptValidationException(f"Prompt content is too long ({len(prompt)} chars). Max 4000 chars.")
+        if len(prompt) > 12000:
+            raise PromptValidationException(f"Prompt content is too long ({len(prompt)} chars). Max 12000 chars.")
 
         # STEP 2: Retrieve the best matching template using semantic search
         retrieval_res = await self.retrieval_service.retrieve_best_template(

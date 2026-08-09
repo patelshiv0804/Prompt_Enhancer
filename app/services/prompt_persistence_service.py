@@ -71,6 +71,10 @@ class PromptPersistenceService:
                 prompt=prompt,
                 content=enhanced_prompt,
                 version_type="initial",
+                old_analysis=old_analysis,
+                new_analysis=new_analysis,
+                tool_recommendations=tool_recommendations,
+                template_id=template_id,
             )
 
             # Generate and save prompt embedding
