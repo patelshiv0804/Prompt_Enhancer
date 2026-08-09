@@ -68,6 +68,7 @@ class EnhanceTemplateSummary(BaseModel):
 
 
 class EnhanceVersionSummary(BaseModel):
+    prompt_id: str = Field(..., description="ID of the persisted prompt")
     version_number: int = Field(..., description="Version sequence number", examples=[1])
 
 

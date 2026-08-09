@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,7 +50,8 @@ class PromptVersionService:
         template_id: Optional[str] = None,
     ) -> PromptVersion:
         logger.info("Creating version for prompt_id=%s", prompt.id)
-        if not content or not content.strip():
+        content = self._clean_version_content(content)
+        if not content:
             raise PromptVersionException("Version content cannot be empty.")
 
         # Determine next sequential version number
@@ -91,6 +93,24 @@ class PromptVersionService:
 
         logger.info("Successfully created version %d (ID: %s)", version_num, version_id)
         return version
+
+    @staticmethod
+    def _clean_version_content(content: str) -> str:
+        """Persist prompt text, not Markdown control characters from an LLM response."""
+        cleaned = content.strip()
+        # Preserve the words while removing inline formatting tokens such as
+        # **Important** and `example`, which otherwise appear as raw symbols in
+        # history views and search results.
+        cleaned = re.sub(r"\\([*_`#-])", r"\1", cleaned)
+        cleaned = re.sub(r"(?<!\*)\*\*([^*]+?)\*\*(?!\*)", r"\1", cleaned)
+        cleaned = re.sub(r"(?<!_)__([^_]+?)__(?!_)", r"\1", cleaned)
+        cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
+        cleaned = re.sub(r"(?<!\*)\*([^*\n]+?)\*(?!\*)", r"\1", cleaned)
+        cleaned = re.sub(r"(?<!_)_([^_\n]+?)_(?!_)", r"\1", cleaned)
+        cleaned = re.sub(r"(?m)^\s*#{1,6}\s*", "", cleaned)
+        cleaned = re.sub(r"(?m)^\s*(?:---+|___+)\s*$", "", cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned.strip()
 
 
     async def restore_version(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Optional
+from typing import Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -50,6 +50,7 @@ class PromptEnhancementService:
         prompt: str = "",
         variables: Optional[dict[str, str]] = None,
         style_attributes: Optional[dict[str, Any]] = None,
+        template_override: Optional[Any] = None,
     ) -> dict:
         logger.info("Starting prompt enhancement request")
         
@@ -59,15 +60,26 @@ class PromptEnhancementService:
         if len(prompt) > 12000:
             raise PromptValidationException(f"Prompt content is too long ({len(prompt)} chars). Max 12000 chars.")
 
-        # STEP 2: Retrieve the best matching template using semantic search
-        retrieval_res = await self.retrieval_service.retrieve_best_template(
-            session=session,
-            role=role,
-            mode=mode,
-            prompt=prompt,
-            variables=variables,
-        )
-        selected_temp = retrieval_res["selected_template"]
+        # STEP 2: Retrieve a template for a new enhancement, or use the
+        # persisted template for re-enhancement. The latter must not trigger
+        # semantic retrieval/embedding generation again.
+        if template_override is not None:
+            selected_temp = {
+                "id": str(template_override.id),
+                "title": template_override.title,
+                "body": template_override.body,
+            }
+            similarity_score = 1.0
+        else:
+            retrieval_res = await self.retrieval_service.retrieve_best_template(
+                session=session,
+                role=role,
+                mode=mode,
+                prompt=prompt,
+                variables=variables,
+            )
+            selected_temp = retrieval_res["selected_template"]
+            similarity_score = retrieval_res["similarity_score"]
         template_id = selected_temp["id"]
         template_body = selected_temp["body"]
 
@@ -134,7 +146,7 @@ class PromptEnhancementService:
                     "enhanced_prompt": enhanced_prompt,
                     "template_id": template_id,
                     "template_title": selected_temp["title"],
-                    "similarity_score": retrieval_res["similarity_score"],
+                    "similarity_score": similarity_score,
                 }
 
             except LLMTimeoutError as exc:

@@ -127,6 +127,7 @@ class PromptReenhanceService:
                 role=template.role,
                 mode=template.mode,
                 prompt=input_text,
+                template_override=template,
             )
         except Exception as exc:
             logger.exception("Prompt enhancement failed during re-enhancement")
@@ -204,9 +205,19 @@ class PromptReenhanceService:
             await self.prompt_repository.update(session, prompt, {})
             await session.flush()
 
-            # Regenerate embedding from latest version content
-            await self.prompt_embedding_service.update_prompt_embedding(session, prompt_id)
-            await session.flush()
+            # The version itself is the user-facing result. Embeddings support
+            # search and must not make re-enhancement fail when the embedding
+            # model is temporarily unavailable.
+            try:
+                await self.prompt_embedding_service.update_prompt_embedding(session, prompt_id)
+                await session.flush()
+            except Exception:
+                logger.warning(
+                    "Could not refresh embedding after re-enhancement for prompt_id=%s; "
+                    "the version was still saved.",
+                    prompt_id,
+                    exc_info=True,
+                )
 
             await session.commit()
             transaction_status = "COMMITTED"
