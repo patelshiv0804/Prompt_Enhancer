@@ -54,14 +54,13 @@ class PromptVersionService:
 
         # Determine next sequential version number
         version_number = 1
-        existing_versions = await self.prompt_version_repository.get_versions_by_prompt(
+        latest_version = await self.prompt_version_repository.get_latest_version(
             session=session,
             prompt_id=str(prompt.id),
-            limit=1,
         )
-        if existing_versions:
+        if latest_version:
             # Validate sequential number and prevent duplicates/skips
-            version_number = existing_versions[0].version_number + 1
+            version_number = latest_version.version_number + 1
 
         version = PromptVersion(
             prompt_id=prompt.id,
