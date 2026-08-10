@@ -92,11 +92,17 @@ class MistralProvider(BaseLLMProvider):
         }
         data = await self._post(payload)
         text = self._parse_text(data)
+        choice = self._first_choice(data)
         return PromptOptimizationResult(
             optimized_prompt=text.strip(),
             template_id=template_id,
             score=None,
-            metadata={"provider": "mistral"},
+            metadata={
+                "provider": "mistral",
+                "finish_reason": choice.get("finish_reason") if isinstance(choice, dict) else None,
+                "usage": data.get("usage") if isinstance(data, dict) else None,
+                "max_tokens": payload["max_tokens"],
+            },
         )
 
     async def generate(self, prompt: str, **kwargs) -> GenerationResult:
@@ -133,12 +139,18 @@ class MistralProvider(BaseLLMProvider):
         if not isinstance(data, dict):
             raise LLMProviderError("Unexpected Mistral response format.")
 
-        if "choices" in data and isinstance(data["choices"], list) and data["choices"]:
-            first = data["choices"][0]
-            if isinstance(first, dict) and "message" in first and "content" in first["message"]:
-                return str(first["message"]["content"])
+        first = self._first_choice(data)
+        if isinstance(first, dict) and "message" in first and "content" in first["message"]:
+            return str(first["message"]["content"])
 
         raise LLMProviderError("Unable to parse Mistral response.")
+
+    def _first_choice(self, data: dict[str, Any]) -> dict[str, Any] | None:
+        if "choices" in data and isinstance(data["choices"], list) and data["choices"]:
+            first = data["choices"][0]
+            if isinstance(first, dict):
+                return first
+        return None
 
     def _parse_analysis(self, text: str) -> PromptAnalysisResult:
         return PromptAnalysisResult(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+from app.core.config import settings
 from app.services.exceptions import PromptOptimizationError
 from app.services.llm.base import BaseLLMProvider
 from app.services.template_selection_service import TemplateSelectionService
@@ -29,6 +30,7 @@ class PromptOptimizationService:
                 prompt=user_prompt,
                 template_id=selected_template["template_id"],
                 mode=mode,
+                max_tokens=settings.mistral_optimization_max_tokens,
             )
         except Exception as exc:
             logger.exception("Prompt optimization failed")

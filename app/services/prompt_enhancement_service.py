@@ -119,6 +119,7 @@ class PromptEnhancementService:
                 result = await self.llm_provider.optimize_prompt(
                     prompt=final_prompt,
                     template_id=template_id,
+                    max_tokens=settings.mistral_optimization_max_tokens,
                 )
                 latency = time.perf_counter() - start_time
 

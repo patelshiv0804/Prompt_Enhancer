@@ -8,9 +8,10 @@ class Settings(BaseSettings):
     llm_provider: str = "mistral"
     mistral_api_key: str = ""
     mistral_model: str = "mistral-large-latest"
-    mistral_timeout: float = 30.0
+    mistral_timeout: float = 60.0
     mistral_temperature: float = 0.3
     mistral_max_tokens: int = 1024
+    mistral_optimization_max_tokens: int = 8192
     max_retries: int = 3
     prompt_analysis_model: str = "mistral-large-latest"
     prompt_analysis_temperature: float = 0.2
