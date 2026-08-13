@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import (
     get_session,
-    get_current_user,
     get_prompt_enhancement_service,
     get_prompt_analysis_service,
     get_prompt_comparison_service,
@@ -17,6 +16,7 @@ from app.api.v1.deps import (
     get_profile_repository,
     get_tool_recommendation_service,
 )
+from app.core.security import get_current_user_id
 from app.api.v1.exceptions import map_service_error
 from app.services.prompt_enhancement_service import PromptEnhancementService
 from app.services.prompt_analysis_service import PromptAnalysisService
@@ -111,7 +111,7 @@ class EnhancePromptResponse(BaseModel):
 async def enhance_prompt(
     payload: EnhancePromptRequest,
     session: AsyncSession = Depends(get_session),
-    current_user: Optional[str] = Depends(get_current_user),
+    current_user_id: UUID = Depends(get_current_user_id),
     enhancement_service: PromptEnhancementService = Depends(get_prompt_enhancement_service),
     analysis_service: PromptAnalysisService = Depends(get_prompt_analysis_service),
     comparison_service: PromptComparisonService = Depends(get_prompt_comparison_service),
@@ -119,11 +119,8 @@ async def enhance_prompt(
     tool_recommendation_service: ToolRecommendationService = Depends(get_tool_recommendation_service),
     profile_repo=Depends(get_profile_repository),
 ) -> EnhancePromptResponse:
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required. Send X-Current-User header.")
-
     try:
-        profile = await profile_repo.get_by_email(session, current_user)
+        profile = await profile_repo.get_by_id(session, str(current_user_id))
         if not profile:
             raise HTTPException(status_code=404, detail="Authenticated profile user not found.")
 

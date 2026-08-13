@@ -30,8 +30,9 @@ from app.services.user_service import ProfileService
 
 settings = get_settings()
 
-# ── In-memory OTP store (key: email, value: (otp, expires_at)) ──
-_otp_store: Dict[str, Tuple[str, datetime]] = {}
+# ── In-memory OTP store (key: email, value: (otp, expires_at, attempts)) ──
+_otp_store: Dict[str, Tuple[str, datetime, int]] = {}
+
 
 
 class AuthService:
@@ -182,7 +183,7 @@ class AuthService:
         expires_at = datetime.now(timezone.utc) + timedelta(
             minutes=settings.OTP_EXPIRE_MINUTES
         )
-        _otp_store[email] = (otp, expires_at)
+        _otp_store[email] = (otp, expires_at, 0)
         logger.info(f"OTP stored for {email} (expires {expires_at})")
 
     @staticmethod
@@ -190,19 +191,25 @@ class AuthService:
         """Verify an OTP. Returns True if valid, raises exception otherwise."""
         stored = _otp_store.get(email)
         if not stored:
-            raise InvalidOTPException()
+            raise InvalidOTPException("Invalid or expired OTP")
 
-        stored_otp, expires_at = stored
+        stored_otp, expires_at, attempts = stored
         if datetime.now(timezone.utc) > expires_at:
             _otp_store.pop(email, None)
-            raise InvalidOTPException()
+            raise InvalidOTPException("OTP has expired. Please request a new one.")
+
+        if attempts >= 5:
+            _otp_store.pop(email, None)
+            raise InvalidOTPException("Too many failed attempts. OTP invalidated.")
 
         if stored_otp != otp:
-            raise InvalidOTPException()
+            _otp_store[email] = (stored_otp, expires_at, attempts + 1)
+            raise InvalidOTPException("Invalid OTP")
 
         # OTP is valid — remove it (one-time use)
         _otp_store.pop(email, None)
         return True
+
 
     async def request_restore_otp(self, email: str) -> str:
         """

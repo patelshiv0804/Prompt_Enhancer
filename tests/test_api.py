@@ -1,6 +1,7 @@
 import pytest
 from sqlmodel import select
 from app.db.models import AIModel, Profile, Template, Prompt, PromptVersion, StyleProfile
+from app.core.security import create_access_token
 
 @pytest.mark.asyncio
 async def test_health_endpoints(client):
@@ -78,7 +79,7 @@ async def test_enhance_endpoint_workflow(client, db_session):
     db_session.add(tmpl)
     await db_session.commit()
 
-    headers = {"X-Current-User": profile.email}
+    headers = {"Authorization": f"Bearer {create_access_token({'sub': str(profile.id)})}"}
     payload = {
         "role": "Marketer",
         "prompt": "Evaluate math equations.",
@@ -123,6 +124,7 @@ async def test_prompts_crud_endpoints(client, db_session):
     await db_session.commit()
 
     headers = {"X-Current-User": profile.email}
+    auth_headers = {"Authorization": f"Bearer {create_access_token({'sub': str(profile.id)})}"}
 
     # 1. Get Details
     res = await client.get(f"/api/v1/prompts/{prompt.id}", headers=headers)
@@ -135,12 +137,16 @@ async def test_prompts_crud_endpoints(client, db_session):
     data = res.json()
     assert len(data["data"]) >= 1
 
-    # 3. Hard delete
-    res = await client.delete(f"/api/v1/prompts/{prompt.id}", headers=headers)
+    # 3. Anonymous delete is rejected
+    res = await client.delete(f"/api/v1/prompts/{prompt.id}")
+    assert res.status_code == 401
+
+    # 4. Owner can hard delete with a valid bearer token
+    res = await client.delete(f"/api/v1/prompts/{prompt.id}", headers=auth_headers)
     assert res.status_code == 200
     assert res.json()["success"] is True
 
-    # 4. Confirm the record was removed from the database
+    # 5. Confirm the record was removed from the database
     res = await client.get(f"/api/v1/prompts/{prompt.id}", headers=headers)
     assert res.status_code == 404
     deleted_prompt = (await db_session.execute(select(Prompt).where(Prompt.id == prompt.id))).scalar_one_or_none()

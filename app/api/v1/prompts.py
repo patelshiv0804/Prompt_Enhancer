@@ -24,6 +24,7 @@ from app.api.v1.deps import (
     get_prompt_reenhance_service,
     get_tool_recommendation_service,
 )
+from app.core.security import get_current_user_id
 from app.services.tool_recommendation_service import ToolRecommendationService
 from app.api.v1.exceptions import map_service_error
 from app.schemas.common import APIResponse, ErrorResponse, PaginatedResponse
@@ -394,9 +395,13 @@ async def restore_prompt_version(
 async def delete_prompt(
     prompt_id: str,
     session: AsyncSession = Depends(get_session),
+    current_user_id: UUID = Depends(get_current_user_id),
     prompt_service: PromptService = Depends(get_prompt_service),
 ) -> APIResponse[None]:
     try:
+        prompt = await prompt_service.get_prompt(session, prompt_id)
+        if str(prompt.user_id) != str(current_user_id):
+            raise HTTPException(status_code=403, detail="Forbidden: You do not own this prompt.")
         await prompt_service.delete_prompt(session, prompt_id)
         await session.commit()
         return APIResponse(message="Prompt deleted successfully.", data=None)

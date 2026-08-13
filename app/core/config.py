@@ -31,9 +31,10 @@ class Settings(BaseSettings):
     enable_recommendations: bool = True
     enable_dev_auth_bypass: bool = False
     google_client_id: str = ""
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     # JWT Authentication Config
-    secret_key: str = "supersecretkey_change_me_in_production"
+    secret_key: str
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
 
@@ -44,6 +45,10 @@ class Settings(BaseSettings):
     otp_expire_minutes: int = 15
     smtp_host: str = "localhost"
     smtp_port: int = 587
+
+    @property
+    def CORS_ORIGINS(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     @property
     def SMTP_USER(self) -> str:
@@ -99,5 +104,11 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+if settings.environment.lower() == "production":
+    if settings.enable_dev_auth_bypass:
+        raise ValueError("enable_dev_auth_bypass MUST be False in production environment")
+
+
 def get_settings() -> Settings:
     return settings
+

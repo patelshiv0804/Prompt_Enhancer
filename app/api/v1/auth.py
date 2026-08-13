@@ -2,7 +2,7 @@
 Auth module — FastAPI router for authentication endpoints.
 """
 
-from fastapi import APIRouter, BackgroundTasks, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,8 +22,34 @@ from app.schemas.auth import (
 from app.services.auth_service import AuthService
 from app.services.user_service import ProfileService
 from app.schemas.user import ProfileResponse
+from app.core.config import settings
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+
+AUTH_COOKIE_NAME = "promptiq_access_token"
+
+
+def set_auth_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        httponly=True,
+        secure=settings.environment.lower() == "production",
+        samesite="lax",
+        path="/",
+    )
+
+
+def clear_auth_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=AUTH_COOKIE_NAME,
+        path="/",
+        httponly=True,
+        secure=settings.environment.lower() == "production",
+        samesite="lax",
+    )
 
 
 @router.post(
@@ -56,12 +82,16 @@ async def register(body: UserRegister, db: AsyncSession = Depends(get_session)):
     summary="Login and get JWT token",
 )
 async def login(
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_session),
 ):
     """Authenticate with email/password and receive a JWT access token."""
     service = AuthService(db)
-    return await service.login(email=form_data.username, password=form_data.password)
+    token_response = await service.login(email=form_data.username, password=form_data.password)
+    set_auth_cookie(response, token_response.access_token)
+    token_response.access_token = ""
+    return token_response
 
 
 @router.post(
@@ -71,13 +101,26 @@ async def login(
 )
 async def google_auth(
     body: GoogleAuthRequest,
+    response: Response,
     db: AsyncSession = Depends(get_session),
 ):
     """Exchange a verified Google ID token for the app's JWT."""
     service = AuthService(db)
     token = await service.authenticate_with_google(body.id_token)
     await db.commit()
+    set_auth_cookie(response, token.access_token)
+    token.access_token = ""
     return token
+
+
+@router.post(
+    "/logout",
+    response_model=MessageResponse,
+    summary="Clear the authentication cookie",
+)
+async def logout(response: Response):
+    clear_auth_cookie(response)
+    return MessageResponse(message="Signed out successfully.")
 
 
 # ── Forgot Password / OTP Reset ──────────────────────────────────────────────
