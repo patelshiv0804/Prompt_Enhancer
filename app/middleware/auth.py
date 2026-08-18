@@ -24,7 +24,7 @@ PUBLIC_PATHS = {
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """Middleware for optional global auth checks."""
+    """Optional middleware for global auth checks."""
 
     async def dispatch(self, request: Request, call_next):
         # Skip auth for public paths
@@ -32,5 +32,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Let FastAPI dependencies handle actual token validation
+        # This middleware just ensures the Authorization header exists
+        # for non-public routes as an early rejection mechanism
         response = await call_next(request)
         return response

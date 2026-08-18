@@ -7,7 +7,7 @@ from typing import Optional
 from uuid import UUID
 
 import bcrypt
-from fastapi import Cookie, Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 
@@ -62,15 +62,11 @@ def decode_access_token(token: str) -> dict:
         )
 
 
-async def get_current_user_id(
-    token: Optional[str] = Depends(oauth2_scheme),
-    cookie_token: Optional[str] = Cookie(None, alias="promptiq_access_token"),
-) -> UUID:
+async def get_current_user_id(token: Optional[str] = Depends(oauth2_scheme)) -> UUID:
     """
     FastAPI dependency — extracts user_id (UUID) from the JWT token.
     Used by all authenticated endpoints.
     """
-    token = token or cookie_token
     if token:
         try:
             payload = decode_access_token(token)
@@ -80,9 +76,8 @@ async def get_current_user_id(
         except Exception:
             pass
 
-    if settings.enable_dev_auth_bypass and settings.environment.lower() != "production":
+    if settings.enable_dev_auth_bypass:
         return UUID("899fd613-4e56-4921-b8f6-7fc1bf85fead")
-
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

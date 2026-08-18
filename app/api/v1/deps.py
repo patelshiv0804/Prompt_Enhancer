@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import Cookie, Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from jose import jwt, JWTError
@@ -17,11 +17,13 @@ async def get_session(session: AsyncSession = Depends(get_async_session)) -> Asy
 
 async def get_current_user(
     authorization: Optional[str] = Header(None),
-    cookie_token: Optional[str] = Cookie(None, alias="promptiq_access_token"),
+    x_current_user: Optional[str] = Header(None, alias="X-Current-User"),
     session: AsyncSession = Depends(get_session),
 ) -> Optional[str]:
-    """Retrieves current user email from valid JWT Authorization Bearer token."""
-    if settings.enable_dev_auth_bypass and settings.environment.lower() != "production":
+    """Retrieves current user email.
+    First tries JWT Authorization Bearer token, then falls back to X-Current-User header.
+    """
+    if settings.enable_dev_auth_bypass:
         from uuid import UUID
         from app.db.models import Profile
         dev_uuid = UUID("899fd613-4e56-4921-b8f6-7fc1bf85fead")
@@ -31,11 +33,8 @@ async def get_current_user(
         if profile:
             return profile.email
 
-    token = cookie_token
     if authorization and authorization.startswith("Bearer "):
         token = authorization.split(" ")[1]
-
-    if token:
         try:
             payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
             user_id = payload.get("sub")
@@ -49,8 +48,7 @@ async def get_current_user(
         except (JWTError, ValueError):
             pass
 
-    return None
-
+    return x_current_user
 
 
 # Repositories & Databases

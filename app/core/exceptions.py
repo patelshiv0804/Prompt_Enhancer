@@ -29,11 +29,6 @@ class UnauthorizedException(Exception):
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-import logging
-from app.core.config import settings
-
-logger = logging.getLogger(__name__)
-
 async def http_error_handler(request: Request, exc: Exception) -> JSONResponse:
     if isinstance(exc, StarletteHTTPException):
         return JSONResponse(
@@ -65,15 +60,11 @@ async def http_error_handler(request: Request, exc: Exception) -> JSONResponse:
             status_code=401,
             content={"detail": exc.message},
         )
-
-    logger.error("Unhandled exception processing request %s: %s", request.url.path, exc, exc_info=True)
-    detail_msg = str(exc) if settings.environment.lower() == "development" and str(exc) else "An internal server error occurred."
     return JSONResponse(
         status_code=500,
-        content={"detail": detail_msg},
+        content={"detail": str(exc) or "An internal server error occurred."},
     )
 
 
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     return await http_error_handler(request, exc)
-

@@ -5,7 +5,7 @@ Users module — FastAPI router for profile management endpoints (Module A).
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_session as get_db
@@ -58,21 +58,6 @@ async def update_profile(
     Update profile information.
     Accepts multipart form data for avatar file upload.
     """
-    if avatar and avatar.filename:
-        allowed_types = {"image/jpeg", "image/png", "image/webp", "image/gif", "image/svg+xml"}
-        if avatar.content_type and avatar.content_type.lower() not in allowed_types:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid file type. Only JPEG, PNG, WebP, GIF, and SVG images are allowed.",
-            )
-        contents = await avatar.read()
-        if len(contents) > 5 * 1024 * 1024:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="File size exceeds maximum allowed limit of 5MB.",
-            )
-        await avatar.seek(0)
-
     service = ProfileService(db)
     return await service.update_profile(
         user_id=user_id,
@@ -80,7 +65,6 @@ async def update_profile(
         role=role,
         avatar_file=avatar,
     )
-
 
 
 # ── P03: Soft delete account ─────────────────────────────
