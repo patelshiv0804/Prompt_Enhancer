@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Optional, Any
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -88,11 +88,11 @@ class ToolRecommendationSummary(BaseModel):
 class EnhancePromptData(BaseModel):
     original_prompt: str
     enhanced_prompt: str
-    analysis: EnhanceAnalysisSummary
-    comparison: EnhanceComparisonSummary
     template: EnhanceTemplateSummary
     version: EnhanceVersionSummary
-    tool_recommendations: ToolRecommendationSummary
+    analysis: Optional[EnhanceAnalysisSummary] = None
+    comparison: Optional[EnhanceComparisonSummary] = None
+    tool_recommendations: Optional[ToolRecommendationSummary] = None
     original_analysis: Optional[dict[str, Any]] = None
     enhanced_analysis: Optional[dict[str, Any]] = None
 
@@ -103,6 +103,91 @@ class EnhancePromptResponse(BaseModel):
     data: EnhancePromptData
 
 
+async def _process_background_analysis(
+    prompt_id: str,
+    original_prompt: str,
+    enhanced_prompt: str,
+    role: Optional[str],
+    mode: Optional[str],
+) -> None:
+    """
+    Background task executing deep LLM analyses, comparison, and tool recommendations.
+    Updates Prompt and PromptVersion records in PostgreSQL asynchronously.
+    """
+    logger.info("Starting background analysis for prompt_id=%s", prompt_id)
+    try:
+        from app.db.session import async_session
+        from app.services.llm.mistral_provider import MistralProvider
+        from app.services.prompt_analysis_service import PromptAnalysisService
+        from app.services.prompt_comparison_service import PromptComparisonService
+        from app.services.tool_recommendation_service import ToolRecommendationService
+        from app.services.embedding_service import EmbeddingService
+        from app.repositories.prompt import PromptRepository
+        from app.repositories.prompt_version import PromptVersionRepository
+
+        llm_provider = MistralProvider()
+        analysis_service = PromptAnalysisService(llm_provider=llm_provider)
+        comparison_service = PromptComparisonService(llm_provider=llm_provider)
+        embedding_service = EmbeddingService()
+        tool_rec_service = ToolRecommendationService(embedding_service=embedding_service)
+
+        # Run independent LLM tasks concurrently
+        orig_analysis_task = analysis_service.analyze(original_prompt)
+        enh_analysis_task = analysis_service.analyze(enhanced_prompt)
+        comparison_task = comparison_service.compare(original_prompt, enhanced_prompt)
+
+        async def _safe_tool_rec():
+            try:
+                return await tool_rec_service.recommend(prompt=original_prompt, mode=mode, role=role)
+            except Exception:
+                return tool_rec_service.get_fallback()
+
+        orig_analysis, enh_analysis, comparison, tool_rec = await asyncio.gather(
+            orig_analysis_task,
+            enh_analysis_task,
+            comparison_task,
+            _safe_tool_rec(),
+        )
+
+        tool_rec_summary = {
+            "matched_task": tool_rec["matched_task"],
+            "match_type": tool_rec["match_type"],
+            "match_confidence": tool_rec["match_confidence"],
+            "tools": tool_rec["tools"],
+        }
+        grade_after = comparison["summary"]["grade_improvement"].split(" to ")[-1]
+        prompt_update_data = {
+            "old_analysis": orig_analysis,
+            "new_analysis": enh_analysis,
+            "grade": grade_after,
+            "tool_recommendations": tool_rec_summary,
+        }
+        version_update_data = {
+            "old_analysis": orig_analysis,
+            "new_analysis": enh_analysis,
+            "tool_recommendations": tool_rec_summary,
+        }
+
+        prompt_repo = PromptRepository()
+        version_repo = PromptVersionRepository()
+
+        async with async_session() as session:
+            prompt = await prompt_repo.get_by_id(session, prompt_id)
+            if not prompt:
+                logger.error("Prompt id=%s not found in background task", prompt_id)
+                return
+
+            if prompt.current_version_id:
+                version = await version_repo.get_by_id(session, str(prompt.current_version_id))
+                if version:
+                    await version_repo.update(session, version, version_update_data)
+
+            await prompt_repo.update(session, prompt, prompt_update_data)
+            logger.info("Successfully completed background analysis for prompt_id=%s, grade=%s", prompt_id, grade_after)
+    except Exception as exc:
+        logger.exception("Error in background analysis task for prompt_id=%s", prompt_id)
+
+
 @router.post(
     "/enhance",
     response_model=EnhancePromptResponse,
@@ -111,13 +196,11 @@ class EnhancePromptResponse(BaseModel):
 )
 async def enhance_prompt(
     payload: EnhancePromptRequest,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
     current_user: Optional[str] = Depends(get_current_user),
     enhancement_service: PromptEnhancementService = Depends(get_prompt_enhancement_service),
-    analysis_service: PromptAnalysisService = Depends(get_prompt_analysis_service),
-    comparison_service: PromptComparisonService = Depends(get_prompt_comparison_service),
     persistence_service: PromptPersistenceService = Depends(get_prompt_persistence_service),
-    tool_recommendation_service: ToolRecommendationService = Depends(get_tool_recommendation_service),
     profile_repo=Depends(get_profile_repository),
 ) -> EnhancePromptResponse:
     if not current_user:
@@ -137,10 +220,8 @@ async def enhance_prompt(
                 raise HTTPException(status_code=404, detail="Style profile not found.")
             style_attributes = style_profile.attributes
 
-        # ⚡ OPTIMIZATION: Run independent LLM calls concurrently in 2 parallel phases
-
-        # Phase 1 (Parallel): Enhance prompt AND analyze the original prompt at the same time
-        enhance_task = enhancement_service.enhance_prompt(
+        # 1. Run prompt enhancement (~5s)
+        enhance_res = await enhancement_service.enhance_prompt(
             session=session,
             role=payload.role,
             mode=payload.mode,
@@ -148,72 +229,42 @@ async def enhance_prompt(
             variables=payload.variables,
             style_attributes=style_attributes,
         )
-        orig_analysis_task = analysis_service.analyze(payload.prompt)
-
-        enhance_res, orig_analysis = await asyncio.gather(enhance_task, orig_analysis_task)
         enhanced_text = enhance_res["enhanced_prompt"]
 
-        # Phase 2 (Parallel): Analyze enhanced prompt, compare before/after, & fetch tool recs at the same time
-        enh_analysis_task = analysis_service.analyze(enhanced_text)
-        comparison_task = comparison_service.compare(payload.prompt, enhanced_text)
-
-        async def _safe_tool_rec():
-            try:
-                return await tool_recommendation_service.recommend(
-                    prompt=payload.prompt,
-                    mode=payload.mode,
-                    role=payload.role,
-                )
-            except Exception:
-                logger.warning("Tool recommendation failed, using fallback")
-                return tool_recommendation_service.get_fallback()
-
-        enh_analysis, comparison, tool_rec = await asyncio.gather(
-            enh_analysis_task,
-            comparison_task,
-            _safe_tool_rec(),
-        )
-
-        tool_rec_summary = ToolRecommendationSummary(
-            matched_task=tool_rec["matched_task"],
-            match_type=tool_rec["match_type"],
-            match_confidence=tool_rec["match_confidence"],
-            tools=[ToolEntry(**t) for t in tool_rec["tools"]],
-        )
-
-        # 6. Persist to database in a single transaction
-        grade_after = comparison["summary"]["grade_improvement"].split(" to ")[-1]
+        # 2. Persist initial record in PostgreSQL immediately
         prompt_record = await persistence_service.create_prompt_with_version(
             session=session,
             user_id=str(profile.id),
             original_prompt=payload.prompt,
             enhanced_prompt=enhanced_text,
             template_id=enhance_res["template_id"],
-            old_analysis=orig_analysis,
-            new_analysis=enh_analysis,
-            grade=grade_after,
+            old_analysis=None,
+            new_analysis=None,
+            grade=None,
             title=f"{payload.role} - {payload.mode}",
-            tool_recommendations=tool_rec_summary.model_dump(),
+            tool_recommendations=None,
         )
         await session.commit()
 
-        # Build paginated/normalized data
+        # 3. Schedule background analysis & DB update
+        background_tasks.add_task(
+            _process_background_analysis,
+            prompt_id=str(prompt_record.id),
+            original_prompt=payload.prompt,
+            enhanced_prompt=enhanced_text,
+            role=payload.role,
+            mode=payload.mode,
+        )
+
+        # 4. Return instant response (~5s)
         data = EnhancePromptData(
             original_prompt=payload.prompt,
             enhanced_prompt=enhanced_text,
-            original_analysis=orig_analysis,
-            enhanced_analysis=enh_analysis,
-            analysis=EnhanceAnalysisSummary(
-                overall_score=orig_analysis["overall_score"],
-                grade=orig_analysis["grade"],
-            ),
-            comparison=EnhanceComparisonSummary(
-                before_score=int(comparison["summary"]["before_score"] * 10),
-                after_score=int(comparison["summary"]["after_score"] * 10),
-                grade_before=comparison["summary"]["grade_improvement"].split(" to ")[0],
-                grade_after=grade_after,
-                improvements=comparison["improvements"],
-            ),
+            original_analysis=None,
+            enhanced_analysis=None,
+            analysis=None,
+            comparison=None,
+            tool_recommendations=None,
             template=EnhanceTemplateSummary(
                 id=enhance_res["template_id"],
                 title=enhance_res["template_title"],
@@ -223,11 +274,10 @@ async def enhance_prompt(
                 version_number=1,
                 prompt_id=str(prompt_record.id),
             ),
-            tool_recommendations=tool_rec_summary,
         )
         return EnhancePromptResponse(
             success=True,
-            message="Prompt enhanced successfully",
+            message="Prompt enhanced successfully. Detailed quality analysis is processing in background.",
             data=data,
         )
     except Exception as exc:

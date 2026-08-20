@@ -59,7 +59,9 @@ class PromptVersionRepository(BaseRepository[PromptVersion]):
         id: str,
         include_prompt: bool = False,
     ) -> Optional[PromptVersion]:
-        statement = select(PromptVersion).where(PromptVersion.id == id)
+        from uuid import UUID
+        v_id = UUID(id) if isinstance(id, str) else id
+        statement = select(PromptVersion).where(PromptVersion.id == v_id)
         if include_prompt:
             statement = statement.options(selectinload(PromptVersion.prompt))
         result = await session.execute(statement)

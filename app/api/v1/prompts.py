@@ -286,6 +286,9 @@ async def get_prompt(
                 "grade": prompt.grade,
             }
 
+        # Use DB-stored tool recommendations (written by background task),
+        # or compute an in-memory fallback without committing to avoid
+        # expiring eagerly loaded relationships after session.commit().
         tool_rec_summary = prompt.tool_recommendations
         if not tool_rec_summary:
             try:
@@ -299,8 +302,9 @@ async def get_prompt(
                     "match_confidence": tool_rec["match_confidence"],
                     "tools": tool_rec["tools"],
                 }
-                prompt.tool_recommendations = tool_rec_summary
-                await session.commit()
+                # NOTE: Do NOT commit here — committing expires all eagerly-loaded
+                # relationships (template, versions, etc.) causing greenlet errors.
+                # The background task writes tool_recommendations to DB separately.
             except Exception as exc:
                 logger.warning(f"Could not calculate tool recommendations for prompt {prompt_id}: {exc}")
 

@@ -23,7 +23,9 @@ class PromptRepository(BaseRepository[Prompt]):
         include_versions: bool = False,
     ) -> Optional[Prompt]:
         from app.core.config import settings
-        statement = select(Prompt).where(Prompt.id == id)
+        from uuid import UUID
+        p_id = UUID(id) if isinstance(id, str) else id
+        statement = select(Prompt).where(Prompt.id == p_id)
         statement = statement.options(selectinload(Prompt.current_version))
         if settings.enable_soft_delete:
             statement = statement.where(Prompt.deleted_at == None)
