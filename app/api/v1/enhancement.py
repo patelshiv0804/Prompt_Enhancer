@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional, Any
 from uuid import UUID
@@ -136,8 +137,10 @@ async def enhance_prompt(
                 raise HTTPException(status_code=404, detail="Style profile not found.")
             style_attributes = style_profile.attributes
 
-        # 1. Run prompt enhancement
-        enhance_res = await enhancement_service.enhance_prompt(
+        # ⚡ OPTIMIZATION: Run independent LLM calls concurrently in 2 parallel phases
+
+        # Phase 1 (Parallel): Enhance prompt AND analyze the original prompt at the same time
+        enhance_task = enhancement_service.enhance_prompt(
             session=session,
             role=payload.role,
             mode=payload.mode,
@@ -145,27 +148,31 @@ async def enhance_prompt(
             variables=payload.variables,
             style_attributes=style_attributes,
         )
+        orig_analysis_task = analysis_service.analyze(payload.prompt)
+
+        enhance_res, orig_analysis = await asyncio.gather(enhance_task, orig_analysis_task)
         enhanced_text = enhance_res["enhanced_prompt"]
 
-        # 2. Analyze original prompt
-        orig_analysis = await analysis_service.analyze(payload.prompt)
+        # Phase 2 (Parallel): Analyze enhanced prompt, compare before/after, & fetch tool recs at the same time
+        enh_analysis_task = analysis_service.analyze(enhanced_text)
+        comparison_task = comparison_service.compare(payload.prompt, enhanced_text)
 
-        # 3. Analyze enhanced prompt
-        enh_analysis = await analysis_service.analyze(enhanced_text)
+        async def _safe_tool_rec():
+            try:
+                return await tool_recommendation_service.recommend(
+                    prompt=payload.prompt,
+                    mode=payload.mode,
+                    role=payload.role,
+                )
+            except Exception:
+                logger.warning("Tool recommendation failed, using fallback")
+                return tool_recommendation_service.get_fallback()
 
-        # 4. Compare prompts
-        comparison = await comparison_service.compare(payload.prompt, enhanced_text)
-
-        # 5. Get AI tool recommendations (safe — never breaks core pipeline)
-        try:
-            tool_rec = await tool_recommendation_service.recommend(
-                prompt=payload.prompt,
-                mode=payload.mode,
-                role=payload.role,
-            )
-        except Exception:
-            logger.warning("Tool recommendation failed, using fallback")
-            tool_rec = tool_recommendation_service.get_fallback()
+        enh_analysis, comparison, tool_rec = await asyncio.gather(
+            enh_analysis_task,
+            comparison_task,
+            _safe_tool_rec(),
+        )
 
         tool_rec_summary = ToolRecommendationSummary(
             matched_task=tool_rec["matched_task"],
