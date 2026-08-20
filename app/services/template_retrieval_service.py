@@ -78,64 +78,117 @@ class TemplateRetrievalService:
 
         original_role = role
         original_mode = mode
-        inferred_role = None
-        inferred_mode = None
+        role_similarity = 1.0
+        mode_similarity = 1.0
 
-        # If role is absent, use the existing intent flow to infer a parent role first.
-        if not role or not role.strip():
+        # ── ROLE RESOLUTION ──────────────────────────────────────────────────────
+        # Strategy:
+        #   1. User provided role AND it has an exact match in DB → use it directly, skip all inference.
+        #   2. User provided role but NO exact match (e.g. "general", a typo, or a stale value)
+        #      → treat as if role was never provided → run full inference chain.
+        #   3. Role is absent → run full inference chain.
+        #
+        # role_was_explicit = True means the user deliberately chose a valid DB role/mode.
+        # When BOTH are explicit, the similarity threshold check is skipped — we just return
+        # the best available template in that category without second-guessing the user's choice.
+        inferred_mode: None | str = None  # may be set by intent analysis below, reused for mode block
+        role_was_explicit = False
+        mode_was_explicit = False
+
+        exact_role = _find_exact_match(role, distinct_roles) if (role and role.strip()) else None
+
+        if exact_role:
+            # ✅ Exact match — user-selected value is valid, use it directly.
+            resolved_role = exact_role
+            role_was_explicit = True
+            logger.info("Role exact match in DB, using directly: '%s'", resolved_role)
+        else:
+            # ❌ No exact match OR role absent — run full inference chain.
+            if role and role.strip():
+                logger.info(
+                    "Role '%s' provided but not found in DB. Falling back to inference.", role
+                )
+            inferred_role: None | str = None
             if self.intent_service:
                 inferred = await self.intent_service.analyze_intent(
                     prompt=prompt,
                     variables=variables,
-                    provided_role=None,
+                    provided_role=None,       # treat as absent so LLM reasons from the prompt
                     provided_mode=mode,
                     distinct_roles=distinct_roles,
                     distinct_modes=distinct_modes,
                 )
                 inferred_role = inferred.get("inferred_role")
                 inferred_mode = inferred.get("inferred_mode")
-            role = inferred_role
 
-        # Resolve role before mode. Role is the parent category; mode choices are scoped under it.
-        if not role or not role.strip():
-            role = distinct_roles[0] if distinct_roles else "Marketer"
+            inferred_role_val = inferred_role if (inferred_role and inferred_role.strip()) else None
+            if not inferred_role_val:
+                inferred_role_val = distinct_roles[0] if distinct_roles else "Marketer"
 
-        resolved_role = role
-        role_similarity = 1.0
-        exact_role = _find_exact_match(role, distinct_roles)
-        if exact_role:
-            resolved_role = exact_role
-        elif self.role_resolver:
-            resolved_role, role_similarity = await self.role_resolver.resolve_role(role, distinct_roles)
+            exact_inferred_role = _find_exact_match(inferred_role_val, distinct_roles)
+            if exact_inferred_role:
+                resolved_role = exact_inferred_role
+            elif self.role_resolver:
+                resolved_role, role_similarity = await self.role_resolver.resolve_role(
+                    inferred_role_val, distinct_roles
+                )
+            else:
+                resolved_role = inferred_role_val
 
+            logger.info("Role inferred/resolved: '%s' → '%s'", inferred_role_val, resolved_role)
+            inferred_mode = inferred_mode if (inferred_mode and inferred_mode.strip()) else None
+
+        # ── LOAD ROLE-SCOPED MODES ────────────────────────────────────────────────
         role_modes = await self.repository.get_distinct_modes_for_role(session, resolved_role)
         if not role_modes:
             role_modes = distinct_modes
 
-        # If mode is absent, infer it from only the modes available under the resolved role.
-        if not mode or not mode.strip():
-            mode = inferred_mode
-            if (not mode or not mode.strip()) and self.intent_service:
+        # ── MODE RESOLUTION ──────────────────────────────────────────────────────
+        # Same three-way strategy as role:
+        #   1. Exact match in role-scoped modes → use directly.
+        #   2. Provided but no exact match → fall back to inference.
+        #   3. Absent → inference chain.
+        exact_mode = _find_exact_match(mode, role_modes) if (mode and mode.strip()) else None
+
+        if exact_mode:
+            # ✅ Exact match.
+            resolved_mode = exact_mode
+            mode_was_explicit = True
+            logger.info("Mode exact match in DB, using directly: '%s'", resolved_mode)
+        else:
+            # ❌ No exact match OR mode absent — run inference chain scoped to resolved role.
+            if mode and mode.strip():
+                logger.info(
+                    "Mode '%s' provided but not found under role '%s'. Falling back to inference.",
+                    mode, resolved_role,
+                )
+            # Reuse mode already inferred during role step if available.
+            inferred_mode_val = inferred_mode if inferred_mode else None
+            if not inferred_mode_val and self.intent_service:
                 inferred = await self.intent_service.analyze_intent(
                     prompt=prompt,
                     variables=variables,
                     provided_role=resolved_role,
-                    provided_mode=None,
+                    provided_mode=None,       # treat as absent so LLM reasons from the prompt
                     distinct_roles=[resolved_role],
                     distinct_modes=role_modes,
                 )
-                mode = inferred.get("inferred_mode")
+                inferred_mode_val = inferred.get("inferred_mode")
 
-        if not mode or not mode.strip():
-            mode = role_modes[0] if role_modes else "Market Research"
+            if not inferred_mode_val or not inferred_mode_val.strip():
+                inferred_mode_val = role_modes[0] if role_modes else "Market Research"
 
-        resolved_mode = mode
-        mode_similarity = 1.0
-        exact_mode = _find_exact_match(mode, role_modes)
-        if exact_mode:
-            resolved_mode = exact_mode
-        elif self.mode_resolver:
-            resolved_mode, mode_similarity = await self.mode_resolver.resolve_mode(mode, role_modes)
+            exact_inferred_mode = _find_exact_match(inferred_mode_val, role_modes)
+            if exact_inferred_mode:
+                resolved_mode = exact_inferred_mode
+            elif self.mode_resolver:
+                resolved_mode, mode_similarity = await self.mode_resolver.resolve_mode(
+                    inferred_mode_val, role_modes
+                )
+            else:
+                resolved_mode = inferred_mode_val
+
+            logger.info("Mode inferred/resolved: '%s' → '%s'", inferred_mode_val, resolved_mode)
 
         # Generate temporary embedding for the user prompt
         emb_start = time.perf_counter()
@@ -186,7 +239,8 @@ class TemplateRetrievalService:
         # Verify similarity threshold on the top ranked template
         top_match = ranked[0]
         similarity_threshold = threshold if threshold is not None else settings.similarity_threshold
-        if top_match["similarity_score"] < similarity_threshold:
+        user_made_explicit_selection = role_was_explicit and mode_was_explicit
+        if not user_made_explicit_selection and top_match["similarity_score"] < similarity_threshold:
             raise SimilarityBelowThresholdError(
                 f"Top matched template similarity score ({top_match['similarity_score']:.4f}) "
                 f"is below the threshold ({similarity_threshold:.4f})."
