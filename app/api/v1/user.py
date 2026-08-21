@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_session as get_db
 from app.core.security import get_current_user_id
+from app.middleware.rate_limit import sensitive_rate_limiter
 from app.schemas.auth import MessageResponse, OTPRequest, OTPVerify
 from app.services.auth_service import AuthService
 from app.schemas.user import (
@@ -90,6 +91,7 @@ async def delete_profile(
     "/restore",
     response_model=MessageResponse,
     summary="Request OTP to restore deleted account",
+    dependencies=[Depends(sensitive_rate_limiter)],
 )
 async def request_restore(
     body: OTPRequest,
@@ -98,15 +100,19 @@ async def request_restore(
 ):
     """
     Send an OTP to the user's email for account restoration.
-    The email must exist in the database.
+    Always returns the same response whether or not the email is registered,
+    to avoid account enumeration (N5).
     """
     auth_service = AuthService(db)
     otp = await auth_service.request_restore_otp(body.email)
 
-    # Send OTP via email in background
-    background_tasks.add_task(send_otp_email, body.email, otp)
+    # Only dispatch the email when the account actually exists.
+    if otp is not None:
+        background_tasks.add_task(send_otp_email, body.email, otp)
 
-    return MessageResponse(message="OTP sent to your email address")
+    return MessageResponse(
+        message="If that account exists, an OTP has been sent to the email address."
+    )
 
 
 # ── P04: Restore deleted account (Step 2: Verify OTP) ────
@@ -114,6 +120,7 @@ async def request_restore(
     "/restore/verify",
     response_model=ProfileResponse,
     summary="Verify OTP and restore account",
+    dependencies=[Depends(sensitive_rate_limiter)],
 )
 async def verify_restore(
     body: OTPVerify,

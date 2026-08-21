@@ -1,13 +1,14 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.api.router import api_router
 from app.core.config import settings
-from app.core.exceptions import http_error_handler, generic_exception_handler
+from app.core.exceptions import http_error_handler
 from app.core.logging import setup_logging
 from app.db.session import verify_database_startup
+from app.middleware.rate_limit import RateLimitMiddleware
 
 API_DESCRIPTION = """
 # PromptIQ API Backend
@@ -21,20 +22,23 @@ Welcome to the **PromptIQ** API documentation. PromptIQ is an advanced prompt op
 * **Prompt Optimization Pipeline**: Analyze prompt quality, apply contextual templates, optimize prompts via LLMs, and auto-grade prompt clarity.
 * **Prompt Versioning**: Maintain an audit trail of prompt version histories with complete conflict-free restoration.
 
-### Simulated Authentication
-For simulated authorization on protected endpoints, client requests must pass the user's email via the HTTP header:
-* `X-Current-User`: (e.g. `user@example.com`)
+### Authentication
+Protected endpoints require a valid JWT. Browser clients are authenticated via a secure
+httpOnly cookie set at login; API clients may also send `Authorization: Bearer <token>`.
 """
 
 
 def create_app() -> FastAPI:
     setup_logging()
+    is_production = settings.environment == "production"
     app = FastAPI(
         title="PromptIQ API",
         description=API_DESCRIPTION,
         version="1.0.0",
         docs_url=None,
         redoc_url=None,
+        # Do not expose the OpenAPI schema (and therefore the docs) in production (VULN-008).
+        openapi_url=None if is_production else "/openapi.json",
         swagger_ui_parameters={
             "syntaxHighlight.theme": "obsidian",
             "defaultModelsExpandDepth": 1,
@@ -42,16 +46,30 @@ def create_app() -> FastAPI:
         },
     )
 
+    # Coarse global rate limiter (VULN-012 / N3). Registered before CORS so its
+    # 429 responses still pass back out through the CORS layer.
+    if settings.rate_limit_enabled:
+        app.add_middleware(
+            RateLimitMiddleware,
+            max_requests=settings.rate_limit_max_requests,
+            window_seconds=settings.rate_limit_window_seconds,
+        )
+
+    # Specific-origin CORS with credentials (VULN-003). Wildcard origins are
+    # incompatible with credentialed cookie auth and are rejected by browsers.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=settings.CORS_ORIGINS,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
     )
 
     @app.get("/docs", include_in_schema=False)
     async def custom_swagger_ui_html() -> HTMLResponse:
+        # Interactive docs are disabled in production (VULN-008).
+        if is_production:
+            raise HTTPException(status_code=404, detail="Not Found")
         response = get_swagger_ui_html(
             openapi_url=app.openapi_url or "/openapi.json",
             title=app.title + " - Interactive API Documentation",
@@ -200,7 +218,8 @@ def create_app() -> FastAPI:
         modified_html = html_content.replace("</head>", f"{custom_css}</head>")
         return HTMLResponse(content=modified_html, status_code=response.status_code)
 
-    app.add_exception_handler(Exception, generic_exception_handler)
+    # Single catch-all handler; it dispatches typed exceptions to the right
+    # status code and sanitizes anything unexpected into a generic 500 (VULN-014).
     app.add_exception_handler(Exception, http_error_handler)
 
     @app.get("/health", tags=["health"])

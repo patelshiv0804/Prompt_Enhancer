@@ -3,34 +3,50 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict
 import uuid
 from app.api.v1.deps import get_session
+from app.core.security import get_current_user_id
 from app.schemas import DeletedStyleResponse, StyleProfileResponse
 from app.services.style_profiles import StyleProfileService
 router = APIRouter(prefix="/styles", tags=["Styles"])
 
 # SP17 - Deleted Profiles
 @router.get("/deleted", response_model=List[DeletedStyleResponse])
-async def get_deleted_style_profiles(db: AsyncSession = Depends(get_session)):
+async def get_deleted_style_profiles(
+    db: AsyncSession = Depends(get_session),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+):
     """Retrieve list of soft-deleted style profiles."""
-    service = StyleProfileService(db)
+    service = StyleProfileService(db, user_id)
     return await service.list_deleted_styles()
 
 # SP16 - Restore Profile
 @router.post("/{id}/restore", response_model=StyleProfileResponse)
-async def restore_style_profile(id: uuid.UUID, db: AsyncSession = Depends(get_session)):
+async def restore_style_profile(
+    id: uuid.UUID,
+    db: AsyncSession = Depends(get_session),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+):
     """Recover a soft-deleted style profile."""
-    service = StyleProfileService(db)
+    service = StyleProfileService(db, user_id)
     return await service.restore_style(id)
 
 # SP18 - Permanent Delete
 @router.delete("/{id}/permanent", response_model=Dict[str, str])
-async def permanent_delete_style_profile(id: uuid.UUID, db: AsyncSession = Depends(get_session)):
+async def permanent_delete_style_profile(
+    id: uuid.UUID,
+    db: AsyncSession = Depends(get_session),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+):
     """Permanently delete a style profile from the database."""
-    service = StyleProfileService(db)
+    service = StyleProfileService(db, user_id)
     return await service.permanent_delete(id)
 
 # 16. SP05 - Delete Style (CRUD)
 @router.delete("/{id}", response_model=StyleProfileResponse)
-async def delete_style_profile(id: uuid.UUID, db: AsyncSession = Depends(get_session)):
+async def delete_style_profile(
+    id: uuid.UUID,
+    db: AsyncSession = Depends(get_session),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+):
     """Soft delete a style profile."""
-    service = StyleProfileService(db)
+    service = StyleProfileService(db, user_id)
     return await service.delete_style(id)

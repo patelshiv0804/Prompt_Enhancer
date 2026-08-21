@@ -1,11 +1,25 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from typing import List, Optional, Union
 import uuid
 from datetime import datetime
 import json
 from app.db.models import StyleProfile
 from app.schemas.style_profiles import CreateStyleProfileRequest, UpdateStyleProfileRequest
+
+
+def _visibility_condition(user_id: Optional[uuid.UUID]):
+    """Owner-or-null visibility filter (N1).
+
+    When ``user_id`` is provided, a style is visible only if the caller owns it
+    or it is a shared/legacy profile with no owner (``user_id IS NULL``). When
+    ``user_id`` is None the filter is a no-op, preserving the previous behaviour
+    for any non-authenticated caller.
+    """
+    if user_id is None:
+        return None
+    return or_(StyleProfile.user_id == user_id, StyleProfile.user_id.is_(None))
+
 
 class StyleProfileRepository:
     @staticmethod
@@ -25,19 +39,26 @@ class StyleProfileRepository:
         return db_obj
 
     @staticmethod
-    async def get_style_by_id(db: AsyncSession, id: uuid.UUID) -> Optional[StyleProfile]:
+    async def get_style_by_id(db: AsyncSession, id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> Optional[StyleProfile]:
         statement = select(StyleProfile).where(
             StyleProfile.id == id,
             StyleProfile.deleted_at.is_(None)
         )
+        cond = _visibility_condition(user_id)
+        if cond is not None:
+            statement = statement.where(cond)
         result = await db.execute(statement)
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def get_all_styles(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[StyleProfile]:
+    async def get_all_styles(db: AsyncSession, skip: int = 0, limit: int = 100, user_id: Optional[uuid.UUID] = None) -> List[StyleProfile]:
         statement = select(StyleProfile).where(
             StyleProfile.deleted_at.is_(None)
-        ).order_by(StyleProfile.created_at.asc(), StyleProfile.id.asc()).offset(skip).limit(limit)
+        )
+        cond = _visibility_condition(user_id)
+        if cond is not None:
+            statement = statement.where(cond)
+        statement = statement.order_by(StyleProfile.created_at.asc(), StyleProfile.id.asc()).offset(skip).limit(limit)
         result = await db.execute(statement)
         return list(result.scalars().all())
 
@@ -73,18 +94,21 @@ class StyleProfileRepository:
         return db_obj
 
     @staticmethod
-    async def get_active_styles(db: AsyncSession) -> List[StyleProfile]:
+    async def get_active_styles(db: AsyncSession, user_id: Optional[uuid.UUID] = None) -> List[StyleProfile]:
         statement = select(StyleProfile).where(
             StyleProfile.is_active == True,
             StyleProfile.deleted_at.is_(None)
         )
+        cond = _visibility_condition(user_id)
+        if cond is not None:
+            statement = statement.where(cond)
         result = await db.execute(statement)
         return list(result.scalars().all())
 
     @staticmethod
-    async def duplicate_style(db: AsyncSession, db_obj: StyleProfile) -> StyleProfile:
+    async def duplicate_style(db: AsyncSession, db_obj: StyleProfile, user_id: Optional[uuid.UUID] = None) -> StyleProfile:
         new_obj = StyleProfile(
-            user_id=db_obj.user_id,
+            user_id=user_id if user_id is not None else db_obj.user_id,
             name=f"{db_obj.name} Copy",
             type=db_obj.type,
             attributes=db_obj.attributes,
@@ -99,10 +123,13 @@ class StyleProfileRepository:
         return new_obj
 
     @staticmethod
-    async def search_styles(db: AsyncSession, query: str, type: Optional[str] = None) -> List[StyleProfile]:
+    async def search_styles(db: AsyncSession, query: str, type: Optional[str] = None, user_id: Optional[uuid.UUID] = None) -> List[StyleProfile]:
         statement = select(StyleProfile).where(
             StyleProfile.deleted_at.is_(None)
         )
+        cond = _visibility_condition(user_id)
+        if cond is not None:
+            statement = statement.where(cond)
         if query:
             statement = statement.where(StyleProfile.name.ilike(f"%{query}%"))
         if type:
@@ -111,35 +138,50 @@ class StyleProfileRepository:
         return list(result.scalars().all())
 
     @staticmethod
-    async def get_styles_by_type(db: AsyncSession, type: str) -> List[StyleProfile]:
+    async def get_styles_by_type(db: AsyncSession, type: str, user_id: Optional[uuid.UUID] = None) -> List[StyleProfile]:
         statement = select(StyleProfile).where(
             StyleProfile.type == type,
             StyleProfile.deleted_at.is_(None)
         )
+        cond = _visibility_condition(user_id)
+        if cond is not None:
+            statement = statement.where(cond)
         result = await db.execute(statement)
         return list(result.scalars().all())
 
     @staticmethod
-    async def get_popular_styles(db: AsyncSession, limit: int = 10) -> List[StyleProfile]:
+    async def get_popular_styles(db: AsyncSession, limit: int = 10, user_id: Optional[uuid.UUID] = None) -> List[StyleProfile]:
         statement = select(StyleProfile).where(
             StyleProfile.deleted_at.is_(None)
-        ).order_by(StyleProfile.use_count.desc()).limit(limit)
+        )
+        cond = _visibility_condition(user_id)
+        if cond is not None:
+            statement = statement.where(cond)
+        statement = statement.order_by(StyleProfile.use_count.desc()).limit(limit)
         result = await db.execute(statement)
         return list(result.scalars().all())
 
     @staticmethod
-    async def get_recent_styles(db: AsyncSession, limit: int = 10) -> List[StyleProfile]:
+    async def get_recent_styles(db: AsyncSession, limit: int = 10, user_id: Optional[uuid.UUID] = None) -> List[StyleProfile]:
         statement = select(StyleProfile).where(
             StyleProfile.deleted_at.is_(None)
-        ).order_by(StyleProfile.created_at.desc()).limit(limit)
+        )
+        cond = _visibility_condition(user_id)
+        if cond is not None:
+            statement = statement.where(cond)
+        statement = statement.order_by(StyleProfile.created_at.desc()).limit(limit)
         result = await db.execute(statement)
         return list(result.scalars().all())
 
     @staticmethod
-    async def get_recommended_styles(db: AsyncSession, limit: int = 10) -> List[StyleProfile]:
+    async def get_recommended_styles(db: AsyncSession, limit: int = 10, user_id: Optional[uuid.UUID] = None) -> List[StyleProfile]:
         statement = select(StyleProfile).where(
             StyleProfile.deleted_at.is_(None)
-        ).order_by(StyleProfile.is_active.desc(), StyleProfile.use_count.desc()).limit(limit)
+        )
+        cond = _visibility_condition(user_id)
+        if cond is not None:
+            statement = statement.where(cond)
+        statement = statement.order_by(StyleProfile.is_active.desc(), StyleProfile.use_count.desc()).limit(limit)
         result = await db.execute(statement)
         return list(result.scalars().all())
 
@@ -151,8 +193,11 @@ class StyleProfileRepository:
         return db_obj
 
     @staticmethod
-    async def get_usage_history(db: AsyncSession) -> List[dict]:
+    async def get_usage_history(db: AsyncSession, user_id: Optional[uuid.UUID] = None) -> List[dict]:
         statement = select(StyleProfile).where(StyleProfile.deleted_at.is_(None))
+        cond = _visibility_condition(user_id)
+        if cond is not None:
+            statement = statement.where(cond)
         result = await db.execute(statement)
         styles = result.scalars().all()
         history = []
@@ -167,8 +212,11 @@ class StyleProfileRepository:
         return history
 
     @staticmethod
-    async def get_usage_analytics(db: AsyncSession) -> dict:
+    async def get_usage_analytics(db: AsyncSession, user_id: Optional[uuid.UUID] = None) -> dict:
         statement = select(StyleProfile).where(StyleProfile.deleted_at.is_(None))
+        cond = _visibility_condition(user_id)
+        if cond is not None:
+            statement = statement.where(cond)
         result = await db.execute(statement)
         styles = result.scalars().all()
         total_uses = sum(s.use_count for s in styles)
@@ -182,7 +230,7 @@ class StyleProfileRepository:
         }
 
     @staticmethod
-    async def import_style(db: AsyncSession, json_data: Union[dict, str]) -> StyleProfile:
+    async def import_style(db: AsyncSession, json_data: Union[dict, str], user_id: Optional[uuid.UUID] = None) -> StyleProfile:
         if isinstance(json_data, str):
             try:
                 data = json.loads(json_data)
@@ -190,8 +238,9 @@ class StyleProfileRepository:
                 raise ValueError("Invalid JSON string format")
         else:
             data = json_data
-            
+
         db_obj = StyleProfile(
+            user_id=user_id,
             name=data.get("name", "Imported Style"),
             type=data.get("type", "art_style"),
             attributes=data.get("attributes", {}),
@@ -215,10 +264,13 @@ class StyleProfileRepository:
         }
 
     @staticmethod
-    async def get_style_by_id_raw(db: AsyncSession, id: uuid.UUID) -> Optional[StyleProfile]:
+    async def get_style_by_id_raw(db: AsyncSession, id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> Optional[StyleProfile]:
         statement = select(StyleProfile).where(
             StyleProfile.id == id
         )
+        cond = _visibility_condition(user_id)
+        if cond is not None:
+            statement = statement.where(cond)
         result = await db.execute(statement)
         return result.scalar_one_or_none()
 
@@ -230,10 +282,13 @@ class StyleProfileRepository:
         return db_obj
 
     @staticmethod
-    async def get_deleted_styles(db: AsyncSession) -> List[StyleProfile]:
+    async def get_deleted_styles(db: AsyncSession, user_id: Optional[uuid.UUID] = None) -> List[StyleProfile]:
         statement = select(StyleProfile).where(
             StyleProfile.deleted_at.is_not(None)
         )
+        cond = _visibility_condition(user_id)
+        if cond is not None:
+            statement = statement.where(cond)
         result = await db.execute(statement)
         return list(result.scalars().all())
 

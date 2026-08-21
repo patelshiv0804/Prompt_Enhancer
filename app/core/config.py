@@ -1,4 +1,15 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# Known-weak secret values that must never be used in production.
+_WEAK_SECRET_KEYS = {
+    "supersecretkey_change_me_in_production",
+    "super-secret-key-change-in-production-please",
+    "changeme",
+    "secret",
+    "your-secret-key",
+}
 
 
 class Settings(BaseSettings):
@@ -36,6 +47,22 @@ class Settings(BaseSettings):
     secret_key: str = "supersecretkey_change_me_in_production"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
+
+    # Cookie & CORS Config
+    # Comma-separated list of allowed browser origins for CORS (credentials enabled).
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    # Name of the httpOnly cookie that carries the JWT access token.
+    access_cookie_name: str = "promptiq_access_token"
+    # SameSite policy for the auth cookie. "lax" works for same-site dev
+    # (localhost:3000 <-> localhost:8000). Set to "none" for cross-domain
+    # production deployments (requires Secure, which is auto-enabled in prod).
+    cookie_samesite: str = "lax"
+
+    # Coarse global rate limiter (per client IP). Kept generous so normal
+    # frontend traffic never trips it; disable via env if needed.
+    rate_limit_enabled: bool = True
+    rate_limit_max_requests: int = 300
+    rate_limit_window_seconds: int = 60
 
     # SMTP & OTP Config
     smtp_user: str = ""
@@ -89,6 +116,30 @@ class Settings(BaseSettings):
     @property
     def GOOGLE_CLIENT_IDS(self) -> list[str]:
         return [value.strip() for value in self.google_client_id.split(",") if value.strip()]
+
+    @property
+    def CORS_ORIGINS(self) -> list[str]:
+        """Parsed list of allowed CORS origins."""
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def COOKIE_SECURE(self) -> bool:
+        """Auth cookie is marked Secure (HTTPS-only) in production."""
+        return self.environment == "production"
+
+    @model_validator(mode="after")
+    def _enforce_production_security(self) -> "Settings":
+        """Fail fast on insecure production configuration (VULN-002 / VULN-006)."""
+        if self.environment == "production":
+            if self.enable_dev_auth_bypass:
+                raise ValueError(
+                    "enable_dev_auth_bypass must be False in production."
+                )
+            if self.secret_key in _WEAK_SECRET_KEYS or len(self.secret_key) < 32:
+                raise ValueError(
+                    "secret_key must be a strong, unique value (>=32 chars) in production."
+                )
+        return self
 
     model_config = SettingsConfigDict(
         env_file=".env",

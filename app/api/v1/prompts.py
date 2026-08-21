@@ -26,6 +26,8 @@ from app.api.v1.deps import (
 )
 from app.services.tool_recommendation_service import ToolRecommendationService
 from app.api.v1.exceptions import map_service_error
+from app.core.security import get_current_user_id
+from app.services.exceptions import PromptNotFoundError
 from app.schemas.common import APIResponse, ErrorResponse, PaginatedResponse
 from app.schemas.prompt import (
     PromptDetailResponse,
@@ -51,6 +53,16 @@ logger = logging.getLogger("promptiq.api.prompts")
 router = APIRouter(prefix="/prompts", tags=["prompts"])
 
 
+def _assert_owner(prompt, user_id: UUID) -> None:
+    """Ensure the prompt belongs to the caller (VULN-007 / N4).
+
+    Raises PromptNotFoundError (mapped to 404) for non-owners so the endpoint
+    never reveals whether a prompt id belonging to someone else exists.
+    """
+    if str(prompt.user_id) != str(user_id):
+        raise PromptNotFoundError("Prompt not found.")
+
+
 @router.get(
     "/",
     response_model=PaginatedResponse[PromptSummary],
@@ -59,26 +71,22 @@ router = APIRouter(prefix="/prompts", tags=["prompts"])
 )
 async def list_prompts(
     session: AsyncSession = Depends(get_session),
-    current_user: Optional[str] = Depends(get_current_user),
+    user_id: UUID = Depends(get_current_user_id),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=1000),
     sort_by: Optional[str] = Query(default="created_at"),
     sort_order: Optional[str] = Query(default="desc"),
-    user_id: Optional[str] = Query(default=None),
     template_id: Optional[str] = Query(default=None),
     ai_model_id: Optional[str] = Query(default=None),
     prompt_service: PromptService = Depends(get_prompt_service),
-    profile_repo=Depends(get_profile_repository),
 ) -> PaginatedResponse[PromptSummary]:
     try:
         limit = page_size
         offset = (page - 1) * page_size
 
-        target_user_id = user_id
-        if not target_user_id and current_user:
-            profile = await profile_repo.get_by_email(session, current_user)
-            if profile:
-                target_user_id = str(profile.id)
+        # Always scope to the authenticated caller; a client-supplied user_id is
+        # no longer honored (prevents cross-user enumeration — N4).
+        target_user_id = str(user_id)
 
         total_count = await prompt_service.count_prompts(
             session=session,
@@ -174,6 +182,7 @@ class PromptRecommendationsResponse(BaseModel):
 async def semantic_search(
     payload: PromptSearchRequest,
     session: AsyncSession = Depends(get_session),
+    user_id: UUID = Depends(get_current_user_id),
     search_service: PromptSearchService = Depends(get_prompt_search_service),
 ) -> PromptSearchResponse:
     try:
@@ -185,7 +194,8 @@ async def semantic_search(
             role=payload.role,
             mode=payload.mode,
             template_id=t_id,
-            user_id=payload.user_id,
+            # Force the caller's own id; ignore any client-supplied user_id (N4).
+            user_id=str(user_id),
             date_from=payload.date_from,
             date_to=payload.date_to,
         )
@@ -205,6 +215,7 @@ async def semantic_search(
 async def detect_duplicates(
     payload: DuplicateCheckRequest,
     session: AsyncSession = Depends(get_session),
+    user_id: UUID = Depends(get_current_user_id),
     dup_service: DuplicateDetectionService = Depends(get_duplicate_detection_service),
 ) -> DuplicateCheckResponse:
     try:
@@ -242,6 +253,7 @@ async def get_recommendations(
     prompt: str = Query(..., description="Reference prompt text to base recommendations on."),
     limit: Optional[int] = Query(default=None, description="Max recommendations to return."),
     session: AsyncSession = Depends(get_session),
+    user_id: UUID = Depends(get_current_user_id),
     rec_service: PromptRecommendationService = Depends(get_prompt_recommendation_service),
 ) -> PromptRecommendationsResponse:
     try:
@@ -266,6 +278,7 @@ async def get_recommendations(
 async def get_prompt(
     prompt_id: str,
     session: AsyncSession = Depends(get_session),
+    user_id: UUID = Depends(get_current_user_id),
     prompt_service: PromptService = Depends(get_prompt_service),
     tool_recommendation_service: ToolRecommendationService = Depends(get_tool_recommendation_service),
 ) -> APIResponse[PromptDetailResponse]:
@@ -277,6 +290,7 @@ async def get_prompt(
             include_ai_model=True,
             include_versions=True,
         )
+        _assert_owner(prompt, user_id)
         
         # Build normalized analysis summary for display
         analysis_data = None
@@ -338,9 +352,13 @@ async def get_prompt(
 async def get_prompt_version_history(
     prompt_id: str,
     session: AsyncSession = Depends(get_session),
+    user_id: UUID = Depends(get_current_user_id),
+    prompt_service: PromptService = Depends(get_prompt_service),
     history_service: PromptHistoryService = Depends(get_prompt_history_service),
 ) -> PaginatedResponse[PromptVersionSummary]:
     try:
+        prompt = await prompt_service.get_prompt(session, prompt_id)
+        _assert_owner(prompt, user_id)
         versions = await history_service.get_history(session, prompt_id)
         return PaginatedResponse(
             message="Prompt version history retrieved.",
@@ -363,10 +381,15 @@ async def restore_prompt_version(
     prompt_id: str,
     version: str,
     session: AsyncSession = Depends(get_session),
+    user_id: UUID = Depends(get_current_user_id),
+    prompt_service: PromptService = Depends(get_prompt_service),
     version_service: PromptVersionService = Depends(get_prompt_version_service),
     history_service: PromptHistoryService = Depends(get_prompt_history_service),
 ) -> APIResponse[None]:
     try:
+        prompt = await prompt_service.get_prompt(session, prompt_id)
+        _assert_owner(prompt, user_id)
+
         import uuid
         version_id = None
         try:
@@ -398,9 +421,12 @@ async def restore_prompt_version(
 async def delete_prompt(
     prompt_id: str,
     session: AsyncSession = Depends(get_session),
+    user_id: UUID = Depends(get_current_user_id),
     prompt_service: PromptService = Depends(get_prompt_service),
 ) -> APIResponse[None]:
     try:
+        prompt = await prompt_service.get_prompt(session, prompt_id)
+        _assert_owner(prompt, user_id)
         await prompt_service.delete_prompt(session, prompt_id)
         await session.commit()
         return APIResponse(message="Prompt deleted successfully.", data=None)
@@ -418,6 +444,7 @@ async def get_similar_to_prompt(
     prompt_id: str,
     limit: Optional[int] = Query(default=None, description="Max results to return."),
     session: AsyncSession = Depends(get_session),
+    user_id: UUID = Depends(get_current_user_id),
     prompt_service: PromptService = Depends(get_prompt_service),
     similarity_service: PromptSimilarityService = Depends(get_prompt_similarity_service),
 ) -> PromptSearchResponse:
@@ -428,6 +455,7 @@ async def get_similar_to_prompt(
             prompt_id,
             include_versions=True,
         )
+        _assert_owner(prompt, user_id)
         # Use active version content if available, fallback to original_prompt
         query_text = prompt.current_version.content if (prompt.current_version and prompt.current_version.content) else prompt.original_prompt
         
@@ -462,9 +490,13 @@ async def regenerate_prompt(
     prompt_id: str,
     payload: Optional[RegeneratePromptRequest] = None,
     session: AsyncSession = Depends(get_session),
+    user_id: UUID = Depends(get_current_user_id),
+    prompt_service: PromptService = Depends(get_prompt_service),
     regeneration_service: PromptRegenerationService = Depends(get_prompt_regeneration_service),
 ) -> RegeneratePromptResponse:
     try:
+        prompt = await prompt_service.get_prompt(session, prompt_id)
+        _assert_owner(prompt, user_id)
         feedback = payload.feedback if payload else None
         result = await regeneration_service.regenerate_prompt(
             session=session,
@@ -490,9 +522,13 @@ async def regenerate_prompt(
 async def reenhance_prompt(
     prompt_id: str,
     session: AsyncSession = Depends(get_session),
+    user_id: UUID = Depends(get_current_user_id),
+    prompt_service: PromptService = Depends(get_prompt_service),
     reenhance_service: PromptReenhanceService = Depends(get_prompt_reenhance_service),
 ) -> ReenhanceVersionResponse:
     try:
+        prompt = await prompt_service.get_prompt(session, prompt_id)
+        _assert_owner(prompt, user_id)
         result = await reenhance_service.reenhance_prompt(
             session=session,
             prompt_id=prompt_id,

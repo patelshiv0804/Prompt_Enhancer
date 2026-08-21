@@ -2,11 +2,12 @@
 Auth module — FastAPI router for authentication endpoints.
 """
 
-from fastapi import APIRouter, BackgroundTasks, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_session
+from app.core.config import get_settings
 from app.schemas.auth import (
     ForgotPasswordRequest,
     GoogleAuthRequest,
@@ -19,11 +20,27 @@ from app.schemas.auth import (
     VerifyResetOTPRequest,
     VerifyResetOTPResponse,
 )
+from app.middleware.rate_limit import sensitive_rate_limiter
 from app.services.auth_service import AuthService
 from app.services.user_service import ProfileService
 from app.schemas.user import ProfileResponse
 
+settings = get_settings()
+
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+
+def _set_auth_cookie(response: Response, access_token: str) -> None:
+    """Store the JWT access token in an httpOnly cookie (VULN-017)."""
+    response.set_cookie(
+        key=settings.access_cookie_name,
+        value=access_token,
+        httponly=True,
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.cookie_samesite,
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        path="/",
+    )
 
 
 @router.post(
@@ -54,14 +71,22 @@ async def register(body: UserRegister, db: AsyncSession = Depends(get_session)):
     "/login",
     response_model=TokenResponse,
     summary="Login and get JWT token",
+    dependencies=[Depends(sensitive_rate_limiter)],
 )
 async def login(
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_session),
 ):
-    """Authenticate with email/password and receive a JWT access token."""
+    """Authenticate with email/password and receive a JWT access token.
+
+    The token is also set as an httpOnly cookie so browser clients never
+    need to store it in JavaScript-accessible storage.
+    """
     service = AuthService(db)
-    return await service.login(email=form_data.username, password=form_data.password)
+    token = await service.login(email=form_data.username, password=form_data.password)
+    _set_auth_cookie(response, token.access_token)
+    return token
 
 
 @router.post(
@@ -70,6 +95,7 @@ async def login(
     summary="Login or register with Google",
 )
 async def google_auth(
+    response: Response,
     body: GoogleAuthRequest,
     db: AsyncSession = Depends(get_session),
 ):
@@ -77,7 +103,24 @@ async def google_auth(
     service = AuthService(db)
     token = await service.authenticate_with_google(body.id_token)
     await db.commit()
+    _set_auth_cookie(response, token.access_token)
     return token
+
+
+@router.post(
+    "/logout",
+    response_model=MessageResponse,
+    summary="Log out and clear the auth cookie",
+)
+async def logout(response: Response):
+    """Clear the httpOnly auth cookie."""
+    response.delete_cookie(
+        key=settings.access_cookie_name,
+        path="/",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.cookie_samesite,
+    )
+    return MessageResponse(message="Logged out successfully.")
 
 
 # ── Forgot Password / OTP Reset ──────────────────────────────────────────────
@@ -86,6 +129,7 @@ async def google_auth(
     "/forgot-password",
     response_model=MessageResponse,
     summary="Request a password-reset OTP",
+    dependencies=[Depends(sensitive_rate_limiter)],
 )
 async def forgot_password(
     body: ForgotPasswordRequest,
@@ -107,6 +151,7 @@ async def forgot_password(
     "/verify-reset-otp",
     response_model=VerifyResetOTPResponse,
     summary="Verify OTP and receive a password-reset token",
+    dependencies=[Depends(sensitive_rate_limiter)],
 )
 async def verify_reset_otp(
     body: VerifyResetOTPRequest,
@@ -127,6 +172,7 @@ async def verify_reset_otp(
     "/reset-password",
     response_model=MessageResponse,
     summary="Set a new password using the reset token",
+    dependencies=[Depends(sensitive_rate_limiter)],
 )
 async def reset_password(
     body: ResetPasswordRequest,

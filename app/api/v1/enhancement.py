@@ -204,7 +204,7 @@ async def enhance_prompt(
     profile_repo=Depends(get_profile_repository),
 ) -> EnhancePromptResponse:
     if not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required. Send X-Current-User header.")
+        raise HTTPException(status_code=401, detail="Authentication required.")
 
     try:
         profile = await profile_repo.get_by_email(session, current_user)
@@ -217,6 +217,10 @@ async def enhance_prompt(
             from app.db.models import StyleProfile
             style_profile = await session.get(StyleProfile, payload.style_profile_id)
             if not style_profile or style_profile.deleted_at is not None:
+                raise HTTPException(status_code=404, detail="Style profile not found.")
+            # Owner-or-null scoping: a style is usable only if it belongs to the
+            # caller or is a shared/legacy profile with no owner (VULN-013).
+            if style_profile.user_id is not None and str(style_profile.user_id) != str(profile.id):
                 raise HTTPException(status_code=404, detail="Style profile not found.")
             style_attributes = style_profile.attributes
 

@@ -24,6 +24,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: promptiq-web
+    # NOTE: --reload and the ".:/app" bind-mount below are for local development
+    # only. Production should drop both (use a baked image, no --reload) — VULN-016.
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
@@ -56,8 +58,9 @@ services:
     image: dpage/pgadmin4
     container_name: promptiq-pgadmin
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@promptiq.dev
-      PGADMIN_DEFAULT_PASSWORD: admin
+      # Credentials come from the environment; the defaults are dev-only (VULN-018).
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@promptiq.dev}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
     ports:
       - "5050:80"
     depends_on:

@@ -11,8 +11,11 @@ from app.db.models import StyleProfile
 VALID_TYPES = ["character", "cinematic", "art_style", "environment", "brand_voice"]
 
 class StyleProfileService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, user_id: Optional[uuid.UUID] = None):
         self.db = db
+        # Owner-or-null scoping key (N1). When None, no scoping is applied
+        # (preserves prior behaviour for any non-authenticated internal caller).
+        self.user_id = user_id
 
     def _validate_type(self, type_str: Optional[str]) -> None:
         if type_str is not None and type_str not in VALID_TYPES:
@@ -24,15 +27,15 @@ class StyleProfileService:
     async def create_style(self, request: CreateStyleProfileRequest, user_id: Optional[uuid.UUID] = None) -> StyleProfile:
         """SP01 - Create a new style profile."""
         self._validate_type(request.type)
-        return await StyleProfileRepository.create_style(self.db, request, user_id)
+        return await StyleProfileRepository.create_style(self.db, request, user_id if user_id is not None else self.user_id)
 
     async def list_styles(self, skip: int = 0, limit: int = 100) -> List[StyleProfile]:
         """SP02 - List all non-deleted style profiles."""
-        return await StyleProfileRepository.get_all_styles(self.db, skip=skip, limit=limit)
+        return await StyleProfileRepository.get_all_styles(self.db, skip=skip, limit=limit, user_id=self.user_id)
 
     async def get_style(self, id: uuid.UUID) -> StyleProfile:
         """SP03 - Retrieve a single style profile by ID."""
-        style = await StyleProfileRepository.get_style_by_id(self.db, id)
+        style = await StyleProfileRepository.get_style_by_id(self.db, id, user_id=self.user_id)
         if not style:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -65,11 +68,11 @@ class StyleProfileService:
     async def duplicate_style(self, id: uuid.UUID) -> StyleProfile:
         """SP08 - Duplicate a style profile."""
         style = await self.get_style(id)
-        return await StyleProfileRepository.duplicate_style(self.db, style)
+        return await StyleProfileRepository.duplicate_style(self.db, style, user_id=self.user_id)
 
     async def get_active_profiles(self) -> List[StyleProfile]:
         """SP09 - Retrieve all active style profiles."""
-        return await StyleProfileRepository.get_active_styles(self.db)
+        return await StyleProfileRepository.get_active_styles(self.db, user_id=self.user_id)
 
     @staticmethod
     def get_types() -> List[str]:
@@ -78,12 +81,12 @@ class StyleProfileService:
 
     async def get_popular_styles(self, limit: int = 10) -> List[StyleProfile]:
         """SP11 - Retrieve popular style profiles sorted by use count."""
-        return await StyleProfileRepository.get_popular_styles(self.db, limit=limit)
+        return await StyleProfileRepository.get_popular_styles(self.db, limit=limit, user_id=self.user_id)
 
     async def import_style(self, json_data: Union[dict, str]) -> StyleProfile:
         """SP12 - Import style profile from JSON data."""
         try:
-            return await StyleProfileRepository.import_style(self.db, json_data)
+            return await StyleProfileRepository.import_style(self.db, json_data, user_id=self.user_id)
         except ValueError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -98,13 +101,13 @@ class StyleProfileService:
     async def preview_injection(self, style_id: uuid.UUID, prompt: str) -> dict:
         """SP14 - Preview injecting style attributes into prompt using the injection template."""
         style = await self.get_style(style_id)
-        
+
         # Increment usage count for preview
         await StyleProfileRepository.increment_use_count(self.db, style)
-        
+
         template = style.injection_template
         attributes = style.attributes or {}
-        
+
         injected_text = ""
         if template:
             try:
@@ -124,10 +127,10 @@ class StyleProfileService:
                     val_str = str(v)
                 lines.append(f"{k.capitalize()}: {val_str}")
             injected_text = "\n".join(lines)
-            
+
         # Combine prompt with styles
         full_injected_prompt = f"{prompt}\n\n{injected_text}".strip()
-        
+
         return {
             "prompt": prompt,
             "injected_prompt": full_injected_prompt
@@ -135,34 +138,34 @@ class StyleProfileService:
 
     async def usage_analytics(self) -> dict:
         """SP15 - Retrieve overall usage analytics for style profiles."""
-        return await StyleProfileRepository.get_usage_analytics(self.db)
+        return await StyleProfileRepository.get_usage_analytics(self.db, user_id=self.user_id)
 
     async def search_styles(self, query: str, type: Optional[str] = None) -> List[StyleProfile]:
         """SSR01 - Search for style profiles by name matching query, with optional type filter."""
         if type is not None:
             self._validate_type(type)
-        return await StyleProfileRepository.search_styles(self.db, query, type)
+        return await StyleProfileRepository.search_styles(self.db, query, type, user_id=self.user_id)
 
     async def recommended_styles(self, limit: int = 10) -> List[StyleProfile]:
         """SSR02 - Retrieve recommended style profiles."""
-        return await StyleProfileRepository.get_recommended_styles(self.db, limit=limit)
+        return await StyleProfileRepository.get_recommended_styles(self.db, limit=limit, user_id=self.user_id)
 
     async def recent_styles(self, limit: int = 10) -> List[StyleProfile]:
         """SSR03 - Retrieve recent style profiles sorted by created date."""
-        return await StyleProfileRepository.get_recent_styles(self.db, limit=limit)
+        return await StyleProfileRepository.get_recent_styles(self.db, limit=limit, user_id=self.user_id)
 
     async def styles_by_type(self, type_str: str) -> List[StyleProfile]:
         """SSR04 - Retrieve style profiles filtered by type."""
         self._validate_type(type_str)
-        return await StyleProfileRepository.get_styles_by_type(self.db, type_str)
+        return await StyleProfileRepository.get_styles_by_type(self.db, type_str, user_id=self.user_id)
 
     async def usage_history(self) -> List[dict]:
         """SSR05 - Retrieve usage history for style profiles."""
-        return await StyleProfileRepository.get_usage_history(self.db)
+        return await StyleProfileRepository.get_usage_history(self.db, user_id=self.user_id)
 
     async def restore_style(self, id: uuid.UUID) -> StyleProfile:
         """SP16 - Recover a soft-deleted style profile."""
-        style = await StyleProfileRepository.get_style_by_id_raw(self.db, id)
+        style = await StyleProfileRepository.get_style_by_id_raw(self.db, id, user_id=self.user_id)
         if not style:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -172,11 +175,11 @@ class StyleProfileService:
 
     async def list_deleted_styles(self) -> List[StyleProfile]:
         """SP17 - Retrieve list of soft-deleted style profiles."""
-        return await StyleProfileRepository.get_deleted_styles(self.db)
+        return await StyleProfileRepository.get_deleted_styles(self.db, user_id=self.user_id)
 
     async def permanent_delete(self, id: uuid.UUID) -> dict:
         """SP18 - Permanently delete a style profile."""
-        style = await StyleProfileRepository.get_style_by_id_raw(self.db, id)
+        style = await StyleProfileRepository.get_style_by_id_raw(self.db, id, user_id=self.user_id)
         if not style:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

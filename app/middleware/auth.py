@@ -1,38 +1,18 @@
 """
-Authentication middleware — validates JWT on protected routes.
-Note: Most auth is handled via FastAPI dependencies (get_current_user_id).
-This middleware provides an additional layer for global request filtering.
+Intentionally removed (VULN-010).
+
+This module previously defined ``AuthMiddleware``, a ``BaseHTTPMiddleware`` that
+maintained its own ``PUBLIC_PATHS`` allowlist but performed **no** token
+validation — its ``dispatch`` simply called ``call_next`` for every request.
+It was never registered in ``app.main`` and gave a false sense of security
+while silently letting all traffic through.
+
+Authentication is enforced exclusively through FastAPI dependencies
+(``app.core.security.get_current_user_id`` and ``app.api.v1.deps.get_current_user``),
+which validate the JWT from the ``Authorization: Bearer`` header or the httpOnly
+auth cookie on each protected route.
+
+Do not reintroduce a pass-through auth middleware here. If global request
+filtering is ever needed, implement real verification (and add tests) rather
+than an allowlist that no-ops.
 """
-
-from fastapi import Request, status
-from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
-
-# Public paths that don't require authentication
-PUBLIC_PATHS = {
-    "/",
-    "/docs",
-    "/redoc",
-    "/openapi.json",
-    "/api/v1/auth/register",
-    "/api/v1/auth/login",
-    "/api/v1/auth/google",
-    "/api/v1/profile/restore",
-    "/api/v1/profile/restore/verify",
-    "/health",
-}
-
-
-class AuthMiddleware(BaseHTTPMiddleware):
-    """Optional middleware for global auth checks."""
-
-    async def dispatch(self, request: Request, call_next):
-        # Skip auth for public paths
-        if request.url.path in PUBLIC_PATHS:
-            return await call_next(request)
-
-        # Let FastAPI dependencies handle actual token validation
-        # This middleware just ensures the Authorization header exists
-        # for non-public routes as an early rejection mechanism
-        response = await call_next(request)
-        return response

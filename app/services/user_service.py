@@ -12,6 +12,33 @@ from app.repositories.user import ProfileRepository, SettingsRepository
 from app.utils.validators import is_valid_avatar_extension, sanitize_display_name
 from app.core.constants import MAX_AVATAR_FILE_SIZE
 
+# Content types accepted for avatar uploads (VULN-011).
+ALLOWED_AVATAR_CONTENT_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+
+
+def _is_supported_image(content: bytes) -> bool:
+    """Confirm the actual bytes are a supported image (VULN-011).
+
+    The filename extension and the client-declared content type can both be
+    spoofed, so we sniff the leading magic bytes before persisting the file.
+    """
+    if len(content) < 12:
+        return False
+    # JPEG: FF D8 FF
+    if content[:3] == b"\xFF\xD8\xFF":
+        return True
+    # PNG: 89 50 4E 47 0D 0A 1A 0A
+    if content[:8] == b"\x89PNG\r\n\x1a\n":
+        return True
+    # GIF: "GIF87a" / "GIF89a"
+    if content[:6] in (b"GIF87a", b"GIF89a"):
+        return True
+    # WEBP: "RIFF" <4 bytes> "WEBP"
+    if content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        return True
+    return False
+
+
 class ProfileService:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -65,13 +92,28 @@ class ProfileService:
                     status_code=400,
                     detail="Invalid avatar file extension. Allowed: jpg, jpeg, png, gif, webp"
                 )
-            
+
+            # Reject anything not declared as an allowed image type (VULN-011).
+            if avatar_file.content_type not in ALLOWED_AVATAR_CONTENT_TYPES:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid avatar content type. Allowed: JPEG, PNG, GIF, WEBP"
+                )
+
             # Read size
             content = await avatar_file.read()
             if len(content) > MAX_AVATAR_FILE_SIZE:
                 raise HTTPException(
                     status_code=400,
                     detail="Avatar file size exceeds the 5MB limit."
+                )
+
+            # Verify the real bytes are an image; extension/content-type alone
+            # are spoofable, so this blocks disguised payloads (VULN-011).
+            if not _is_supported_image(content):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Uploaded file is not a valid image."
                 )
 
             # Ensure upload directory exists

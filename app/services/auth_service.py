@@ -7,7 +7,7 @@ import secrets
 import string
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from google.auth.transport.requests import Request
 from google.oauth2 import id_token as google_id_token
@@ -32,6 +32,13 @@ settings = get_settings()
 
 # ── In-memory OTP store (key: email, value: (otp, expires_at)) ──
 _otp_store: Dict[str, Tuple[str, datetime]] = {}
+
+# Failed-verification counter per email; OTP is invalidated once it hits the cap.
+_otp_attempts: Dict[str, int] = {}
+_MAX_OTP_ATTEMPTS = 5
+
+# Issued password-reset token IDs (jti -> expiry) for single-use enforcement.
+_reset_token_store: Dict[str, datetime] = {}
 
 
 class AuthService:
@@ -173,8 +180,8 @@ class AuthService:
 
     @staticmethod
     def generate_otp() -> str:
-        """Generate a 6-digit numeric OTP."""
-        return "".join(random.choices(string.digits, k=6))
+        """Generate a cryptographically secure 6-digit numeric OTP."""
+        return "".join(secrets.choice(string.digits) for _ in range(6))
 
     @staticmethod
     def store_otp(email: str, otp: str) -> None:
@@ -183,11 +190,16 @@ class AuthService:
             minutes=settings.OTP_EXPIRE_MINUTES
         )
         _otp_store[email] = (otp, expires_at)
+        _otp_attempts.pop(email, None)
         logger.info(f"OTP stored for {email} (expires {expires_at})")
 
     @staticmethod
     def verify_otp(email: str, otp: str) -> bool:
-        """Verify an OTP. Returns True if valid, raises exception otherwise."""
+        """Verify an OTP. Returns True if valid, raises exception otherwise.
+
+        The OTP is invalidated after too many failed attempts to defeat
+        brute-force guessing (VULN-005).
+        """
         stored = _otp_store.get(email)
         if not stored:
             raise InvalidOTPException()
@@ -195,23 +207,34 @@ class AuthService:
         stored_otp, expires_at = stored
         if datetime.now(timezone.utc) > expires_at:
             _otp_store.pop(email, None)
+            _otp_attempts.pop(email, None)
             raise InvalidOTPException()
 
         if stored_otp != otp:
+            attempts = _otp_attempts.get(email, 0) + 1
+            _otp_attempts[email] = attempts
+            if attempts >= _MAX_OTP_ATTEMPTS:
+                # Too many wrong guesses — burn the OTP so it can't be brute-forced.
+                _otp_store.pop(email, None)
+                _otp_attempts.pop(email, None)
+                logger.warning(f"OTP invalidated after {attempts} failed attempts for {email}")
             raise InvalidOTPException()
 
         # OTP is valid — remove it (one-time use)
         _otp_store.pop(email, None)
+        _otp_attempts.pop(email, None)
         return True
 
-    async def request_restore_otp(self, email: str) -> str:
+    async def request_restore_otp(self, email: str) -> Optional[str]:
         """
-        Generate and store OTP for account restoration.
-        Returns the OTP (in production, this would be sent via email only).
+        Generate and store an OTP for account restoration.
+        Returns the OTP, or None if the email is not registered
+        (returns silently to avoid account enumeration — N5).
         """
         user = await self.repo.get_by_email(email)
         if not user:
-            raise NotFoundException("User with this email")
+            logger.info(f"Account restore requested for unknown email: {email}")
+            return None
 
         otp = self.generate_otp()
         self.store_otp(email, otp)
@@ -247,9 +270,12 @@ class AuthService:
         # Will raise InvalidOTPException on failure (one-time use — removed from store)
         self.verify_otp(email, otp)
 
-        # Issue a short-lived JWT scoped to password-reset only
+        # Issue a short-lived JWT scoped to password-reset only, tagged with a
+        # unique jti recorded server-side so it can only be redeemed once.
+        jti = str(uuid4())
+        _reset_token_store[jti] = datetime.now(timezone.utc) + timedelta(minutes=15)
         reset_token = create_access_token(
-            data={"sub": email, "purpose": "password_reset"},
+            data={"sub": email, "purpose": "password_reset", "jti": jti},
             expires_delta=timedelta(minutes=15),
         )
         logger.info(f"Password reset OTP verified for {email}; reset token issued")
@@ -274,6 +300,17 @@ class AuthService:
         if payload.get("purpose") != "password_reset":
             raise UnauthorizedException("Token is not valid for password reset")
 
+        # Enforce single-use: the jti must still be present in the server-side
+        # store. A missing/unknown jti means the token was already redeemed
+        # (or issued before this safeguard / a server restart) — reject it (VULN-015).
+        jti = payload.get("jti")
+        expires_at = _reset_token_store.get(jti) if jti else None
+        if not expires_at:
+            raise UnauthorizedException("Password reset token has already been used or is invalid")
+        if datetime.now(timezone.utc) > expires_at:
+            _reset_token_store.pop(jti, None)
+            raise UnauthorizedException("Invalid or expired password reset token")
+
         email: str = payload.get("sub", "")
         if not email:
             raise UnauthorizedException("Invalid reset token payload")
@@ -285,5 +322,7 @@ class AuthService:
         hashed = hash_password(new_password)
         await self.repo.update_password(user.id, hashed)
         await self.db.commit()
+        # Consume the token so it can never be reused.
+        _reset_token_store.pop(jti, None)
         logger.info(f"Password reset successfully for user: {user.id}")
 

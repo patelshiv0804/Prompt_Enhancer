@@ -1,9 +1,11 @@
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.v1.deps import get_session
 from app.api.v1.exceptions import map_service_error
+from app.core.security import get_current_user_id
 from app.repositories.prompt import PromptRepository
 from app.repositories.prompt_version import PromptVersionRepository
 from app.schemas.common import APIResponse, ErrorResponse, PaginatedResponse
@@ -14,6 +16,7 @@ from app.schemas.prompt_version import (
     PromptVersionSummary,
 )
 from app.services.embedding_service import EmbeddingService
+from app.services.exceptions import PromptNotFoundError
 from app.services.prompt_embedding_service import PromptEmbeddingService
 from app.services.prompt_restore_service import PromptRestoreService
 from app.services.prompt_version_service import PromptVersionService
@@ -22,6 +25,18 @@ router = APIRouter(prefix="/prompt-versions", tags=["prompt_versions"])
 
 prompt_repository = PromptRepository()
 prompt_version_repository = PromptVersionRepository()
+
+
+async def _assert_prompt_owner(session, prompt_id: str, user_id: UUID):
+    """Load a prompt and confirm the caller owns it (N1).
+
+    Raises PromptNotFoundError (mapped to 404) when the prompt does not exist
+    or belongs to another user, so ownership is never leaked.
+    """
+    prompt = await prompt_repository.get_by_id(session, prompt_id)
+    if prompt is None or str(prompt.user_id) != str(user_id):
+        raise PromptNotFoundError("Prompt not found.")
+    return prompt
 
 prompt_version_service = PromptVersionService(
     prompt_repository=prompt_repository,
@@ -56,8 +71,10 @@ async def create_prompt_version(
     payload: PromptVersionCreate,
     prompt_id: str = Query(...),
     session=Depends(get_session),
+    user_id: UUID = Depends(get_current_user_id),
 ) -> APIResponse[PromptVersionRead]:
     try:
+        await _assert_prompt_owner(session, prompt_id, user_id)
         version = await prompt_version_service.create_version_for_prompt(
             session=session,
             prompt_id=prompt_id,
@@ -80,11 +97,17 @@ async def create_prompt_version(
 )
 async def list_prompt_versions(
     session=Depends(get_session),
+    user_id: UUID = Depends(get_current_user_id),
     prompt_id: Optional[str] = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> PaginatedResponse[PromptVersionSummary]:
+    # Require a specific, caller-owned prompt so versions can't be listed
+    # across the whole table by an authenticated user (N1).
+    if not prompt_id:
+        raise HTTPException(status_code=400, detail="prompt_id is required.")
     try:
+        await _assert_prompt_owner(session, prompt_id, user_id)
         versions = await prompt_version_service.list_versions(session, prompt_id=prompt_id, limit=limit, offset=offset)
         return PaginatedResponse(
             message="Prompt versions retrieved.",
@@ -107,9 +130,14 @@ async def list_prompt_versions(
         500: {"model": ErrorResponse, "description": "Internal server error occurred while retrieving the version details."},
     },
 )
-async def get_prompt_version(version_id: str, session=Depends(get_session)) -> APIResponse[PromptVersionRead]:
+async def get_prompt_version(
+    version_id: str,
+    session=Depends(get_session),
+    user_id: UUID = Depends(get_current_user_id),
+) -> APIResponse[PromptVersionRead]:
     try:
         version = await prompt_version_service.get_version(session, version_id)
+        await _assert_prompt_owner(session, str(version.prompt_id), user_id)
         return APIResponse(message="Prompt version retrieved.", data=PromptVersionRead(**version.model_dump()))
     except Exception as exc:
         raise map_service_error(exc)
@@ -130,8 +158,10 @@ async def restore_prompt_version(
     prompt_id: str,
     payload: PromptVersionRestoreRequest,
     session=Depends(get_session),
+    user_id: UUID = Depends(get_current_user_id),
 ) -> APIResponse[None]:
     try:
+        await _assert_prompt_owner(session, prompt_id, user_id)
         await prompt_restore_service.restore_version(session=session, prompt_id=prompt_id, version_id=str(payload.version_id))
         return APIResponse(message="Prompt version restored.", data=None)
     except Exception as exc:

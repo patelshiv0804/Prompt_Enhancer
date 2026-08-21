@@ -1,5 +1,9 @@
+import logging
+
 from fastapi import Request
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 
 class AlreadyExistsException(Exception):
@@ -60,9 +64,12 @@ async def http_error_handler(request: Request, exc: Exception) -> JSONResponse:
             status_code=401,
             content={"detail": exc.message},
         )
+    # Unhandled exception: log the full detail server-side, but never leak the
+    # raw exception text (stack details, SQL, secrets) to the client (VULN-014).
+    logger.exception("Unhandled exception during request %s %s", request.method, request.url.path)
     return JSONResponse(
         status_code=500,
-        content={"detail": str(exc) or "An internal server error occurred."},
+        content={"detail": "An internal server error occurred."},
     )
 
 

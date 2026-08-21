@@ -7,7 +7,7 @@ from typing import Optional
 from uuid import UUID
 
 import bcrypt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 
@@ -62,11 +62,20 @@ def decode_access_token(token: str) -> dict:
         )
 
 
-async def get_current_user_id(token: Optional[str] = Depends(oauth2_scheme)) -> UUID:
+async def get_current_user_id(
+    request: Request,
+    token: Optional[str] = Depends(oauth2_scheme),
+) -> UUID:
     """
     FastAPI dependency — extracts user_id (UUID) from the JWT token.
+    Accepts the token from the Authorization: Bearer header (e.g. Swagger)
+    or, failing that, from the httpOnly auth cookie set at login.
     Used by all authenticated endpoints.
     """
+    # Fall back to the httpOnly cookie when no Authorization header is present.
+    if not token:
+        token = request.cookies.get(settings.access_cookie_name)
+
     if token:
         try:
             payload = decode_access_token(token)

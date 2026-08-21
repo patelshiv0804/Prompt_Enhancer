@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from jose import jwt, JWTError
@@ -16,25 +16,27 @@ async def get_session(session: AsyncSession = Depends(get_async_session)) -> Asy
 
 
 async def get_current_user(
+    request: Request,
     authorization: Optional[str] = Header(None),
-    x_current_user: Optional[str] = Header(None, alias="X-Current-User"),
     session: AsyncSession = Depends(get_session),
 ) -> Optional[str]:
-    """Retrieves current user email.
-    First tries JWT Authorization Bearer token, then falls back to X-Current-User header.
-    """
-    if settings.enable_dev_auth_bypass:
-        from uuid import UUID
-        from app.db.models import Profile
-        dev_uuid = UUID("899fd613-4e56-4921-b8f6-7fc1bf85fead")
-        statement = select(Profile).where(Profile.id == dev_uuid)
-        result = await session.execute(statement)
-        profile = result.scalar_one_or_none()
-        if profile:
-            return profile.email
+    """Retrieves the current user's email from a validated JWT.
 
+    The token is read from the Authorization: Bearer header or, failing that,
+    from the httpOnly auth cookie set at login. Returns None when no valid
+    token is present. There is intentionally no header-based identity fallback.
+
+    A valid token always wins; the dev bypass is only a last resort so that the
+    two auth dependencies (this and ``get_current_user_id``) resolve to the same
+    identity in every scenario.
+    """
+    token = None
     if authorization and authorization.startswith("Bearer "):
         token = authorization.split(" ")[1]
+    else:
+        token = request.cookies.get(settings.access_cookie_name)
+
+    if token:
         try:
             payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
             user_id = payload.get("sub")
@@ -48,7 +50,17 @@ async def get_current_user(
         except (JWTError, ValueError):
             pass
 
-    return x_current_user
+    if settings.enable_dev_auth_bypass:
+        from uuid import UUID
+        from app.db.models import Profile
+        dev_uuid = UUID("899fd613-4e56-4921-b8f6-7fc1bf85fead")
+        statement = select(Profile).where(Profile.id == dev_uuid)
+        result = await session.execute(statement)
+        profile = result.scalar_one_or_none()
+        if profile:
+            return profile.email
+
+    return None
 
 
 # Repositories & Databases
