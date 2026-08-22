@@ -48,6 +48,9 @@ ENV PORT=8000
 ENV HOST=0.0.0.0
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
+# Deterministic, shared Hugging Face cache location. Kept outside /app so the
+# development bind-mount of the source tree cannot shadow it.
+ENV HF_HOME=/opt/hf-cache
 
 # Expose application port
 EXPOSE 8000
@@ -55,6 +58,22 @@ EXPOSE 8000
 # Create and run under a secure non-root user
 RUN useradd -u 10001 -m appuser \
     && chown -R appuser:appuser /app
+
+# Pre-download the embedding model at build time so the first request never
+# pays the download/validation cost. This must run while the network is
+# available, i.e. BEFORE the offline flags below. Keep the default in sync with
+# EMBEDDING_MODEL_NAME in app/core/config.py; override at build with
+# --build-arg EMBEDDING_MODEL_NAME=...
+ARG EMBEDDING_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
+RUN mkdir -p "$HF_HOME" \
+    && python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBEDDING_MODEL_NAME}')" \
+    && chown -R appuser:appuser "$HF_HOME"
+
+# With the model baked into the image, force Hugging Face fully offline at
+# runtime so it never makes network round-trips to validate the cache.
+ENV HF_HUB_OFFLINE=1
+ENV TRANSFORMERS_OFFLINE=1
+
 USER appuser
 
 # Healthcheck for orchestration

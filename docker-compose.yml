@@ -44,9 +44,20 @@ services:
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - FROM_EMAIL=${FROM_EMAIL:-noreply@promptiq.com}
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      # Allow the browser extension's chrome-extension://<id> origin. Pin the
+      # exact published origin in production instead of this dev-wide pattern.
+      - CORS_ORIGIN_REGEX=${CORS_ORIGIN_REGEX:-chrome-extension://.*}
+      # Match the image's baked-in Hugging Face cache location (see Dockerfile).
+      - HF_HOME=/opt/hf-cache
     volumes:
       - .:/app
       - uploads:/app/uploads
+      # Persist the Hugging Face model cache across restarts. A fresh named
+      # volume is initialised from the image's baked-in /opt/hf-cache, so the
+      # model is present even with HF offline. Recreate it (docker compose
+      # down -v) if you rebuild the image with a different model.
+      - hfcache:/opt/hf-cache
     depends_on:
       db:
         condition: service_healthy
@@ -74,6 +85,8 @@ volumes:
   pgdata:
     driver: local
   uploads:
+    driver: local
+  hfcache:
     driver: local
 
 networks:

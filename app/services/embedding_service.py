@@ -20,14 +20,18 @@ class EmbeddingService:
 
     @property
     def model(self) -> SentenceTransformer:
-        if self._model is None:
+        # Cache the loaded model at the class level so every EmbeddingService
+        # instance (created per-request in several call sites) shares one
+        # in-memory model. This makes the startup warmup effective everywhere
+        # and prevents repeated multi-second reloads.
+        if EmbeddingService._model is None:
             logger.info("Loading embedding model: %s", self.model_name)
             try:
-                self._model = SentenceTransformer(self.model_name)
+                EmbeddingService._model = SentenceTransformer(self.model_name)
             except Exception as exc:
                 logger.exception("Failed to load embedding model %s", self.model_name)
                 raise EmbeddingGenerationError("Failed to load embedding model.") from exc
-        return self._model
+        return EmbeddingService._model
 
     def generate(self, texts: List[str]) -> List[float]:
         try:

@@ -1,3 +1,6 @@
+import asyncio
+import logging
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -9,6 +12,26 @@ from app.core.exceptions import http_error_handler
 from app.core.logging import setup_logging
 from app.db.session import verify_database_startup
 from app.middleware.rate_limit import RateLimitMiddleware
+
+logger = logging.getLogger("promptiq.startup")
+
+
+async def _warm_embedding_model() -> None:
+    """Preload the sentence-transformers embedding model at startup so the first
+    user request doesn't pay the multi-second cold-load cost. The load is
+    CPU-bound and synchronous, so it runs in a worker thread to avoid blocking
+    the event loop. Failures are non-fatal — the model then loads lazily on
+    first use."""
+    try:
+        from app.services.embedding_service import EmbeddingService
+
+        service = EmbeddingService()
+        await asyncio.to_thread(lambda: service.model)
+        logger.info("Embedding model preloaded at startup.")
+    except Exception:
+        logger.exception(
+            "Embedding model warmup failed; it will load lazily on first use."
+        )
 
 API_DESCRIPTION = """
 # PromptIQ API Backend
@@ -60,6 +83,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,
+        allow_origin_regex=settings.CORS_ORIGIN_REGEX,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
@@ -241,6 +265,7 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def startup_event() -> None:
         await verify_database_startup()
+        await _warm_embedding_model()
 
     return app
 

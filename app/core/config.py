@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     # Cookie & CORS Config
     # Comma-separated list of allowed browser origins for CORS (credentials enabled).
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    # Optional regex matching additional allowed origins (e.g. browser
+    # extensions, whose chrome-extension://<id> origin varies between builds in
+    # development). Wired to CORSMiddleware's allow_origin_regex, which — unlike
+    # a "*" wildcard — is compatible with allow_credentials=True. Empty disables
+    # regex matching. In production, pin the exact published extension origin.
+    cors_origin_regex: str = ""
     # Name of the httpOnly cookie that carries the JWT access token.
     access_cookie_name: str = "promptiq_access_token"
     # SameSite policy for the auth cookie. "lax" works for same-site dev
@@ -121,6 +127,11 @@ class Settings(BaseSettings):
     def CORS_ORIGINS(self) -> list[str]:
         """Parsed list of allowed CORS origins."""
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def CORS_ORIGIN_REGEX(self) -> str | None:
+        """Optional regex of allowed origins (e.g. chrome-extension://.*); None when unset."""
+        return self.cors_origin_regex or None
 
     @property
     def COOKIE_SECURE(self) -> bool:
