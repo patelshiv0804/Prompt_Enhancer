@@ -5,6 +5,23 @@ from typing import Optional
 
 logger = logging.getLogger("promptiq.prompt_builder")
 
+# Maps an enhancement depth level to a clear directive for the LLM.
+_DEPTH_INSTRUCTIONS: dict[str, str] = {
+    "minimal": (
+        "Apply only light improvements: fix grammar, tighten clarity, and add minimal structure. "
+        "Preserve the user's original wording and intent as closely as possible."
+    ),
+    "standard": (
+        "Enhance with standard prompt-engineering depth: assign a clear role, add context, "
+        "specify output format, and include relevant constraints. Default enhancement level."
+    ),
+    "deep": (
+        "Apply full prompt-engineering depth: multi-layered role definition, step-by-step "
+        "reasoning chain, exhaustive context and constraints, few-shot examples where helpful, "
+        "and a detailed output schema. Leave no ambiguity."
+    ),
+}
+
 
 class PromptBuilder:
     """
@@ -27,8 +44,9 @@ class PromptBuilder:
         rendered_template: str,
         system_instructions: Optional[str] = None,
         style_attributes: Optional[dict] = None,
+        enhancement_level: str = "standard",
     ) -> str:
-        logger.info("Building final prompt for Mistral AI")
+        logger.info("Building final prompt for Mistral AI (level=%s)", enhancement_level)
         sys_inst = system_instructions or self.DEFAULT_SYSTEM_INSTRUCTIONS
 
         # Assemble prompt components deterministically
@@ -36,6 +54,10 @@ class PromptBuilder:
             f"=== SYSTEM INSTRUCTIONS ===\n{sys_inst.strip()}",
             f"=== TARGET PROFILE ===\nRole: {role.strip()}\nMode: {mode.strip()}",
         ]
+
+        # Inject depth directive so the LLM knows how much restructuring to apply
+        depth_text = _DEPTH_INSTRUCTIONS.get(enhancement_level, _DEPTH_INSTRUCTIONS["standard"])
+        parts.append(f"=== ENHANCEMENT DEPTH ===\n{depth_text}")
 
         if style_attributes:
             import json

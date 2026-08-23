@@ -288,3 +288,11 @@ def get_tool_recommendation_service(
     emb: EmbeddingService = Depends(get_embedding_service),
 ) -> ToolRecommendationService:
     return ToolRecommendationService(embedding_service=emb)
+
+# Prompt Classification (enhancement depth)
+from app.services.prompt_classification_service import PromptClassificationService
+
+def get_prompt_classification_service(
+    llm: MistralProvider = Depends(get_llm_provider),
+) -> PromptClassificationService:
+    return PromptClassificationService(llm_provider=llm)

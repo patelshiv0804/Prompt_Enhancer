@@ -17,6 +17,7 @@ from app.api.v1.deps import (
     get_prompt_persistence_service,
     get_profile_repository,
     get_tool_recommendation_service,
+    get_prompt_classification_service,
 )
 from app.api.v1.exceptions import map_service_error
 from app.services.prompt_enhancement_service import PromptEnhancementService
@@ -24,6 +25,7 @@ from app.services.prompt_analysis_service import PromptAnalysisService
 from app.services.prompt_comparison_service import PromptComparisonService
 from app.services.prompt_persistence_service import PromptPersistenceService
 from app.services.tool_recommendation_service import ToolRecommendationService
+from app.services.prompt_classification_service import PromptClassificationService
 
 logger = logging.getLogger("promptiq.api.enhancement")
 router = APIRouter(tags=["Enhancement & Analysis"])
@@ -37,6 +39,11 @@ class EnhancePromptRequest(BaseModel):
     variables: Optional[dict[str, str]] = Field(default=None, description="Template placeholder replacements", examples=[{"BUSINESS_CONTEXT": "remote SaaS", "LANGUAGE": "English"}])
     apply_style: bool = Field(default=False, description="Apply style profile")
     style_profile_id: Optional[UUID] = Field(default=None, description="Style profile UUID")
+    enhancement_level: Optional[str] = Field(
+        default=None,
+        description="Enhancement depth override: 'minimal', 'standard', or 'deep'. Omit (or pass null) to let the AI auto-detect.",
+        examples=["standard"],
+    )
 
 
 class AnalyzePromptRequest(BaseModel):
@@ -95,6 +102,8 @@ class EnhancePromptData(BaseModel):
     tool_recommendations: Optional[ToolRecommendationSummary] = None
     original_analysis: Optional[dict[str, Any]] = None
     enhanced_analysis: Optional[dict[str, Any]] = None
+    detected_level: Optional[str] = Field(default=None, description="The enhancement depth that was applied: minimal, standard, or deep")
+    level_reason: Optional[str] = Field(default=None, description="Short explanation of why this depth was chosen")
 
 
 class EnhancePromptResponse(BaseModel):
@@ -202,6 +211,7 @@ async def enhance_prompt(
     enhancement_service: PromptEnhancementService = Depends(get_prompt_enhancement_service),
     persistence_service: PromptPersistenceService = Depends(get_prompt_persistence_service),
     profile_repo=Depends(get_profile_repository),
+    classification_service: PromptClassificationService = Depends(get_prompt_classification_service),
 ) -> EnhancePromptResponse:
     if not current_user:
         raise HTTPException(status_code=401, detail="Authentication required.")
@@ -224,6 +234,19 @@ async def enhance_prompt(
                 raise HTTPException(status_code=404, detail="Style profile not found.")
             style_attributes = style_profile.attributes
 
+        # Resolve enhancement level: forced override OR AI auto-detection
+        _valid_levels = {"minimal", "standard", "deep"}
+        if payload.enhancement_level and payload.enhancement_level.lower() in _valid_levels:
+            resolved_level = payload.enhancement_level.lower()
+            resolved_reason = f"Manually set to {resolved_level}."
+            logger.info("Enhancement level forced by user: %s", resolved_level)
+        else:
+            # Auto-detect via classifier (never blocks — has internal fallback)
+            classification = await classification_service.classify(payload.prompt)
+            resolved_level = classification["level"]
+            resolved_reason = classification["reason"]
+            logger.info("Enhancement level auto-detected: %s (%s)", resolved_level, resolved_reason)
+
         # 1. Run prompt enhancement (~5s)
         enhance_res = await enhancement_service.enhance_prompt(
             session=session,
@@ -232,6 +255,7 @@ async def enhance_prompt(
             prompt=payload.prompt,
             variables=payload.variables,
             style_attributes=style_attributes,
+            enhancement_level=resolved_level,
         )
         enhanced_text = enhance_res["enhanced_prompt"]
 
@@ -269,6 +293,8 @@ async def enhance_prompt(
             analysis=None,
             comparison=None,
             tool_recommendations=None,
+            detected_level=resolved_level,
+            level_reason=resolved_reason,
             template=EnhanceTemplateSummary(
                 id=enhance_res["template_id"],
                 title=enhance_res["template_title"],
