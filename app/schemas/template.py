@@ -60,6 +60,22 @@ class TemplateRead(TemplateSummary):
     updated_at: datetime
 
 
+class TemplateListItem(TemplateSummary):
+    """Card metadata for the public templates library.
+
+    Deliberately excludes the prompt ``body`` (the proprietary "recipe"), which
+    must never reach the client. Carries the non-sensitive fields the library
+    cards need: description, tags, usage count, owning model, timestamps.
+    """
+
+    description: Optional[str] = None
+    ai_model_id: UUID
+    tags: List[str] = Field(default_factory=list)
+    use_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
 class TemplateSearchResponse(BaseModel):
     items: list[TemplateSummary]
     total: int

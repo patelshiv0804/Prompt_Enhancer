@@ -16,10 +16,12 @@ from app.api.v1.deps import (
     get_prompt_comparison_service,
     get_prompt_persistence_service,
     get_profile_repository,
+    get_template_repository,
     get_tool_recommendation_service,
     get_prompt_classification_service,
 )
 from app.api.v1.exceptions import map_service_error
+from app.services.exceptions import TemplateNotFoundError
 from app.services.prompt_enhancement_service import PromptEnhancementService
 from app.services.prompt_analysis_service import PromptAnalysisService
 from app.services.prompt_comparison_service import PromptComparisonService
@@ -43,6 +45,10 @@ class EnhancePromptRequest(BaseModel):
         default=None,
         description="Enhancement depth override: 'minimal', 'standard', or 'deep'. Omit (or pass null) to let the AI auto-detect.",
         examples=["standard"],
+    )
+    template_id: Optional[UUID] = Field(
+        default=None,
+        description="Explicitly selected library template UUID. When provided, this template's recipe is used for enhancement instead of automatic semantic retrieval.",
     )
 
 
@@ -211,6 +217,7 @@ async def enhance_prompt(
     enhancement_service: PromptEnhancementService = Depends(get_prompt_enhancement_service),
     persistence_service: PromptPersistenceService = Depends(get_prompt_persistence_service),
     profile_repo=Depends(get_profile_repository),
+    template_repo=Depends(get_template_repository),
     classification_service: PromptClassificationService = Depends(get_prompt_classification_service),
 ) -> EnhancePromptResponse:
     if not current_user:
@@ -247,14 +254,30 @@ async def enhance_prompt(
             resolved_reason = classification["reason"]
             logger.info("Enhancement level auto-detected: %s (%s)", resolved_level, resolved_reason)
 
+        # If the user explicitly applied a library template in the optimizer,
+        # that template drives the enhancement: load it and pass it as an
+        # override so its own recipe (body) and role/mode framing are used,
+        # mirroring the re-enhance flow. With no template_id supplied, the
+        # normal semantic-retrieval path runs completely unchanged.
+        template_override = None
+        effective_role = payload.role
+        effective_mode = payload.mode
+        if payload.template_id is not None:
+            template_override = await template_repo.get_by_id(session, str(payload.template_id))
+            if not template_override or getattr(template_override, "deleted_at", None) is not None:
+                raise TemplateNotFoundError("Selected template not found.")
+            effective_role = template_override.role or payload.role
+            effective_mode = template_override.mode or payload.mode
+
         # 1. Run prompt enhancement (~5s)
         enhance_res = await enhancement_service.enhance_prompt(
             session=session,
-            role=payload.role,
-            mode=payload.mode,
+            role=effective_role,
+            mode=effective_mode,
             prompt=payload.prompt,
             variables=payload.variables,
             style_attributes=style_attributes,
+            template_override=template_override,
             enhancement_level=resolved_level,
         )
         enhanced_text = enhance_res["enhanced_prompt"]
@@ -269,7 +292,7 @@ async def enhance_prompt(
             old_analysis=None,
             new_analysis=None,
             grade=None,
-            title=f"{payload.role} - {payload.mode}",
+            title=f"{effective_role} - {effective_mode}",
             tool_recommendations=None,
         )
         await session.commit()
@@ -280,8 +303,8 @@ async def enhance_prompt(
             prompt_id=str(prompt_record.id),
             original_prompt=payload.prompt,
             enhanced_prompt=enhanced_text,
-            role=payload.role,
-            mode=payload.mode,
+            role=effective_role,
+            mode=effective_mode,
         )
 
         # 4. Return instant response (~5s)

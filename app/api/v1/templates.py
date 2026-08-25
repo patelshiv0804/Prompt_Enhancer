@@ -6,7 +6,7 @@ from app.api.v1.deps import get_session
 from app.api.v1.exceptions import map_service_error
 from app.repositories.template import TemplateRepository
 from app.schemas.common import APIResponse, ErrorResponse, PaginatedResponse
-from app.schemas.template import TemplateCreate, TemplateRead, TemplateSummary, TemplateUpdate
+from app.schemas.template import TemplateCreate, TemplateListItem, TemplateRead, TemplateUpdate
 from app.services.template_service import TemplateService
 
 router = APIRouter(prefix="/templates", tags=["templates"])
@@ -34,9 +34,9 @@ async def create_template(payload: TemplateCreate, session=Depends(get_session))
 
 @router.get(
     "/",
-    response_model=PaginatedResponse[TemplateSummary],
+    response_model=PaginatedResponse[TemplateListItem],
     summary="List Templates",
-    description="Retrieves a paginated list of templates. Supports filtering by mode, category, target AI Model, approval status, and active models.",
+    description="Retrieves a paginated list of templates. Supports filtering by mode, category, target AI Model, approval status, and active models. The prompt body is intentionally omitted from list results.",
     responses={
         500: {"model": ErrorResponse, "description": "Internal server error occurred while retrieving templates."},
     },
@@ -52,7 +52,7 @@ async def list_templates(
     only_active_models: Optional[bool] = Query(default=False),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
-) -> PaginatedResponse[TemplateSummary]:
+) -> PaginatedResponse[TemplateListItem]:
     templates = await template_service.list_templates(
         session=session,
         mode=mode,
@@ -67,7 +67,7 @@ async def list_templates(
     )
     return PaginatedResponse(
         message="Template list retrieved.",
-        data=[TemplateSummary(**template.model_dump()) for template in templates],
+        data=[TemplateListItem(**template.model_dump()) for template in templates],
         page=(offset // limit) + 1,
         page_size=limit,
         total=len(templates),
