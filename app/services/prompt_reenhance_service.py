@@ -191,7 +191,7 @@ class PromptReenhanceService:
                 content=enhanced_text,
                 version_type="REENHANCEMENT",
                 change_summary=(
-                    f"Re-enhanced from v{latest_version.version_number} using template '{template.title}'."
+                    f"Re-enhanced from v{latest_version.version_number}."
                 ),
                 old_analysis=old_analysis,
                 new_analysis=new_analysis,
@@ -400,7 +400,7 @@ class PromptReenhanceService:
                 content=enhanced_text,
                 version_type="REENHANCEMENT",
                 change_summary=(
-                    f"Re-enhanced from v{latest_version.version_number} using template '{template.title}'."
+                    f"Re-enhanced from v{latest_version.version_number}."
                 ),
                 old_analysis=old_analysis,
                 new_analysis=new_analysis,
