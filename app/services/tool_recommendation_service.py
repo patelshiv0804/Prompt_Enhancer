@@ -21,6 +21,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from app.core import redis_client
+from app.core.config import settings
 from app.data.tool_rankings import TOOL_RANKINGS, DEFAULT_RECOMMENDATION
 from app.services.embedding_service import EmbeddingService
 
@@ -51,7 +53,7 @@ class ToolRecommendationService:
         Recommend AI tools based on prompt, mode, and role with prompt-priority resolution.
         """
         # Ensure embedding cache is ready
-        self._ensure_embeddings_cached()
+        await self._ensure_embeddings_cached()
 
         # 1. Resolve prompt match (highest intent signal)
         prompt_match = self._resolve_single_text(prompt, text_type="prompt")
@@ -216,9 +218,77 @@ class ToolRecommendationService:
             return None
 
     # ── Embedding Cache ───────────────────────────────────────────────
+    # Two tiers:
+    #   1. The class attribute — one computation per process (unchanged).
+    #   2. Redis — survives process death, so a cold start (or a host waking
+    #      from sleep) reloads ~60 vectors instead of re-encoding all of them.
+    #
+    # A Redis miss or an unreachable Redis falls straight through to the
+    # original compute loop, so behaviour without Redis is exactly as before.
 
-    def _ensure_embeddings_cached(self) -> None:
+    def _tool_embeddings_key(self) -> str:
+        """Cache key fingerprinting both the model and the ranking table.
+
+        The model name matters because a different model produces vectors of
+        different meaning and possibly different dimensions. The task labels
+        matter because each cached vector is paired with its index in
+        TOOL_RANKINGS — if that table gains, loses, or renames an entry, the
+        old payload would silently point at the wrong task.
+        """
+        fingerprint = redis_client.hash_text(
+            "\n".join(entry["task"] for entry in TOOL_RANKINGS)
+        )
+        return redis_client.make_key(
+            redis_client.NS_TOOL_EMBED,
+            self.embedding_service.model_name.replace("/", "_"),
+            fingerprint,
+        )
+
+    @staticmethod
+    def _deserialize_tool_embeddings(payload: object) -> Optional[list[tuple[str, int, list[float]]]]:
+        """Rebuild the cache from a JSON payload, or return None if it is unusable.
+
+        JSON has no tuple type, so each entry comes back as a list and must be
+        re-packed. Everything is validated before it is trusted: a malformed
+        payload must fall back to recomputing, never corrupt the matcher.
+        """
+        if not isinstance(payload, list) or len(payload) != len(TOOL_RANKINGS):
+            return None
+
+        rebuilt: list[tuple[str, int, list[float]]] = []
+        expected_dim: Optional[int] = None
+        for item in payload:
+            if not isinstance(item, (list, tuple)) or len(item) != 3:
+                return None
+            task_label, idx, emb = item
+            if not isinstance(task_label, str) or not isinstance(idx, int) or isinstance(idx, bool):
+                return None
+            if not isinstance(emb, list) or not emb:
+                return None
+            if not all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in emb):
+                return None
+            if expected_dim is None:
+                expected_dim = len(emb)
+            elif len(emb) != expected_dim:
+                return None
+            if not (0 <= idx < len(TOOL_RANKINGS)) or TOOL_RANKINGS[idx]["task"] != task_label:
+                return None
+            rebuilt.append((task_label, idx, emb))
+
+        return rebuilt
+
+    async def _ensure_embeddings_cached(self) -> None:
         if ToolRecommendationService._task_embeddings is not None:
+            return
+
+        key = self._tool_embeddings_key()
+        restored = self._deserialize_tool_embeddings(await redis_client.get_json(key))
+        if restored is not None:
+            ToolRecommendationService._task_embeddings = restored
+            logger.info(
+                "Restored %d tool ranking embeddings from Redis (skipped re-encoding).",
+                len(restored),
+            )
             return
 
         try:
@@ -234,6 +304,15 @@ class ToolRecommendationService:
         except Exception as exc:
             logger.warning("Could not pre-compute embeddings (offline/no model): %s", exc)
             ToolRecommendationService._task_embeddings = None
+            return
+
+        # Only reached on a complete, successful computation — a partial table
+        # is never published to Redis.
+        await redis_client.set_json(
+            key,
+            [[task_label, idx, emb] for task_label, idx, emb in cache],
+            ttl=settings.redis_ttl_tool_embeddings,
+        )
 
     # ── Result Builder ────────────────────────────────────────────────
 

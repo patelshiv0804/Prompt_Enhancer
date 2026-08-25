@@ -130,7 +130,7 @@ async def verify_restore(
     Verify the OTP and restore the soft-deleted account.
     """
     # Verify OTP first
-    AuthService.verify_otp(body.email, body.otp)
+    await AuthService.verify_otp(body.email, body.otp)
 
     # Restore the profile
     service = ProfileService(db)

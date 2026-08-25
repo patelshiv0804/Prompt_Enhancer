@@ -14,6 +14,7 @@ from google.oauth2 import id_token as google_id_token
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core import redis_client
 from app.core.exceptions import (
     AlreadyExistsException,
     InvalidOTPException,
@@ -30,7 +31,19 @@ from app.services.user_service import ProfileService
 
 settings = get_settings()
 
-# ── In-memory OTP store (key: email, value: (otp, expires_at)) ──
+# ── OTP / reset-token state ───────────────────────────────────────────────
+# These dicts are process-local, so on their own they lose every issued OTP
+# and reset-token jti whenever the container restarts or a sleeping instance
+# wakes up — mid-flow, a user's valid OTP would be rejected — and they are
+# invisible to any second worker or instance.
+#
+# When Redis is configured, every write below is mirrored into it and reads
+# prefer it, which fixes both problems. The dicts are deliberately KEPT and
+# still written to: if Redis is absent or unreachable, behaviour falls back
+# to exactly what it was before Redis existed rather than failing the
+# request. See app/core/redis_client.py for that contract.
+
+# key: email, value: (otp, expires_at)
 _otp_store: Dict[str, Tuple[str, datetime]] = {}
 
 # Failed-verification counter per email; OTP is invalidated once it hits the cap.
@@ -39,6 +52,30 @@ _MAX_OTP_ATTEMPTS = 5
 
 # Issued password-reset token IDs (jti -> expiry) for single-use enforcement.
 _reset_token_store: Dict[str, datetime] = {}
+
+
+def _normalize_email(email: str) -> str:
+    """Canonical key for OTP state.
+
+    Both stores must agree on the key. Redis keys are built from the
+    lowercased address, so the in-memory dicts use the same form — otherwise a
+    verify that differed only in case would consume the Redis copy while
+    leaving the in-memory copy alive to be replayed, and a legitimate user who
+    typed a different case would be rejected outright.
+    """
+    return (email or "").strip().lower()
+
+
+def _otp_key(email: str) -> str:
+    return redis_client.make_key(redis_client.NS_OTP, _normalize_email(email))
+
+
+def _otp_attempts_key(email: str) -> str:
+    return redis_client.make_key(redis_client.NS_OTP_ATTEMPTS, _normalize_email(email))
+
+
+def _reset_jti_key(jti: str) -> str:
+    return redis_client.make_key(redis_client.NS_RESET_JTI, jti)
 
 
 class AuthService:
@@ -184,45 +221,127 @@ class AuthService:
         return "".join(secrets.choice(string.digits) for _ in range(6))
 
     @staticmethod
-    def store_otp(email: str, otp: str) -> None:
-        """Store OTP with expiry in memory."""
+    async def store_otp(email: str, otp: str) -> None:
+        """Store an OTP with its expiry.
+
+        Written to Redis (survives restarts, shared across workers) *and* to
+        the process-local dict, so a missing or unreachable Redis degrades to
+        the original in-memory behaviour instead of failing.
+        """
         expires_at = datetime.now(timezone.utc) + timedelta(
             minutes=settings.OTP_EXPIRE_MINUTES
         )
-        _otp_store[email] = (otp, expires_at)
-        _otp_attempts.pop(email, None)
-        logger.info(f"OTP stored for {email} (expires {expires_at})")
+        cache_key = _normalize_email(email)
+        _otp_store[cache_key] = (otp, expires_at)
+        _otp_attempts.pop(cache_key, None)
+
+        stored_in_redis = await redis_client.set_json(
+            _otp_key(email),
+            {"otp": otp, "expires_at": expires_at.isoformat()},
+            ttl=settings.redis_ttl_otp,
+        )
+        # A fresh OTP resets the failed-attempt counter in both stores.
+        await redis_client.delete(_otp_attempts_key(email))
+
+        logger.info(
+            "OTP stored for %s (expires %s, redis=%s)",
+            email,
+            expires_at,
+            "yes" if stored_in_redis else "no",
+        )
 
     @staticmethod
-    def verify_otp(email: str, otp: str) -> bool:
+    async def verify_otp(email: str, otp: str) -> bool:
         """Verify an OTP. Returns True if valid, raises exception otherwise.
 
         The OTP is invalidated after too many failed attempts to defeat
         brute-force guessing (VULN-005).
+
+        Redis is consulted first so the OTP survives a restart and is visible
+        to every worker. On a Redis miss — including Redis being down — this
+        falls through to the in-memory path below, which is unchanged.
         """
-        stored = _otp_store.get(email)
+        entry = await redis_client.get_json(_otp_key(email))
+        if isinstance(entry, dict) and entry.get("otp"):
+            return await AuthService._verify_otp_redis(email, otp, entry)
+
+        # ── In-memory path (also the fallback when Redis is unavailable) ──
+        cache_key = _normalize_email(email)
+        stored = _otp_store.get(cache_key)
         if not stored:
             raise InvalidOTPException()
 
         stored_otp, expires_at = stored
         if datetime.now(timezone.utc) > expires_at:
-            _otp_store.pop(email, None)
-            _otp_attempts.pop(email, None)
+            _otp_store.pop(cache_key, None)
+            _otp_attempts.pop(cache_key, None)
             raise InvalidOTPException()
 
         if stored_otp != otp:
-            attempts = _otp_attempts.get(email, 0) + 1
-            _otp_attempts[email] = attempts
+            attempts = _otp_attempts.get(cache_key, 0) + 1
+            _otp_attempts[cache_key] = attempts
             if attempts >= _MAX_OTP_ATTEMPTS:
                 # Too many wrong guesses — burn the OTP so it can't be brute-forced.
-                _otp_store.pop(email, None)
-                _otp_attempts.pop(email, None)
+                _otp_store.pop(cache_key, None)
+                _otp_attempts.pop(cache_key, None)
                 logger.warning(f"OTP invalidated after {attempts} failed attempts for {email}")
             raise InvalidOTPException()
 
         # OTP is valid — remove it (one-time use)
-        _otp_store.pop(email, None)
-        _otp_attempts.pop(email, None)
+        _otp_store.pop(cache_key, None)
+        _otp_attempts.pop(cache_key, None)
+        return True
+
+    @staticmethod
+    async def _verify_otp_redis(email: str, otp: str, entry: dict) -> bool:
+        """Redis-backed half of verify_otp.
+
+        Mirrors the in-memory semantics exactly. Every terminal branch clears
+        the local dicts too, so a consumed or burned OTP can never be replayed
+        through the in-memory fallback path.
+        """
+        cache_key = _normalize_email(email)
+
+        def _burn() -> None:
+            _otp_store.pop(cache_key, None)
+            _otp_attempts.pop(cache_key, None)
+
+        try:
+            expires_at = datetime.fromisoformat(str(entry.get("expires_at")))
+        except (TypeError, ValueError):
+            # Unparseable expiry — treat as expired rather than trusting it.
+            await redis_client.delete(_otp_key(email), _otp_attempts_key(email))
+            _burn()
+            raise InvalidOTPException()
+
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        if datetime.now(timezone.utc) > expires_at:
+            await redis_client.delete(_otp_key(email), _otp_attempts_key(email))
+            _burn()
+            raise InvalidOTPException()
+
+        if str(entry.get("otp")) != otp:
+            attempts = await redis_client.incr_with_ttl(
+                _otp_attempts_key(email), ttl=settings.redis_ttl_otp_attempts
+            )
+            if attempts is None:
+                # Redis dropped out mid-verification — keep counting locally so
+                # the brute-force cap still applies.
+                attempts = _otp_attempts.get(cache_key, 0) + 1
+                _otp_attempts[cache_key] = attempts
+            if attempts >= _MAX_OTP_ATTEMPTS:
+                await redis_client.delete(_otp_key(email), _otp_attempts_key(email))
+                _burn()
+                logger.warning(
+                    "OTP invalidated after %d failed attempts for %s", attempts, email
+                )
+            raise InvalidOTPException()
+
+        # Valid — consume it everywhere (one-time use).
+        await redis_client.delete(_otp_key(email), _otp_attempts_key(email))
+        _burn()
         return True
 
     async def request_restore_otp(self, email: str) -> Optional[str]:
@@ -237,7 +356,7 @@ class AuthService:
             return None
 
         otp = self.generate_otp()
-        self.store_otp(email, otp)
+        await self.store_otp(email, otp)
         return otp
 
     # ── Password Reset via OTP ────────────────────────────
@@ -256,7 +375,7 @@ class AuthService:
             return
 
         otp = self.generate_otp()
-        self.store_otp(email, otp)
+        await self.store_otp(email, otp)
         logger.info(f"Password reset OTP generated for {email}")
 
         # Send email synchronously (or swap for BackgroundTasks in the endpoint)
@@ -268,12 +387,20 @@ class AuthService:
         Raises InvalidOTPException if the OTP is wrong or expired.
         """
         # Will raise InvalidOTPException on failure (one-time use — removed from store)
-        self.verify_otp(email, otp)
+        await self.verify_otp(email, otp)
 
         # Issue a short-lived JWT scoped to password-reset only, tagged with a
         # unique jti recorded server-side so it can only be redeemed once.
+        # Recorded in Redis as well as in-process so the single-use guarantee
+        # survives a restart and holds across workers.
         jti = str(uuid4())
-        _reset_token_store[jti] = datetime.now(timezone.utc) + timedelta(minutes=15)
+        reset_expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+        _reset_token_store[jti] = reset_expires_at
+        await redis_client.set_json(
+            _reset_jti_key(jti),
+            {"expires_at": reset_expires_at.isoformat(), "email": email},
+            ttl=settings.redis_ttl_reset_token,
+        )
         reset_token = create_access_token(
             data={"sub": email, "purpose": "password_reset", "jti": jti},
             expires_delta=timedelta(minutes=15),
@@ -303,12 +430,28 @@ class AuthService:
         # Enforce single-use: the jti must still be present in the server-side
         # store. A missing/unknown jti means the token was already redeemed
         # (or issued before this safeguard / a server restart) — reject it (VULN-015).
+        # Redis is checked first so a restart no longer invalidates every
+        # outstanding reset link; the in-process dict is the fallback.
         jti = payload.get("jti")
-        expires_at = _reset_token_store.get(jti) if jti else None
+        expires_at: Optional[datetime] = None
+
+        if jti:
+            record = await redis_client.get_json(_reset_jti_key(jti))
+            if isinstance(record, dict) and record.get("expires_at"):
+                try:
+                    expires_at = datetime.fromisoformat(str(record["expires_at"]))
+                    if expires_at.tzinfo is None:
+                        expires_at = expires_at.replace(tzinfo=timezone.utc)
+                except (TypeError, ValueError):
+                    expires_at = None
+            if expires_at is None:
+                expires_at = _reset_token_store.get(jti)
+
         if not expires_at:
             raise UnauthorizedException("Password reset token has already been used or is invalid")
         if datetime.now(timezone.utc) > expires_at:
             _reset_token_store.pop(jti, None)
+            await redis_client.delete(_reset_jti_key(jti))
             raise UnauthorizedException("Invalid or expired password reset token")
 
         email: str = payload.get("sub", "")
@@ -322,7 +465,8 @@ class AuthService:
         hashed = hash_password(new_password)
         await self.repo.update_password(user.id, hashed)
         await self.db.commit()
-        # Consume the token so it can never be reused.
+        # Consume the token so it can never be reused — in both stores.
         _reset_token_store.pop(jti, None)
+        await redis_client.delete(_reset_jti_key(jti))
         logger.info(f"Password reset successfully for user: {user.id}")
 

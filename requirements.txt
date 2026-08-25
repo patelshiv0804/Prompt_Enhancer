@@ -21,6 +21,10 @@ requests>=2.32.0
 bcrypt>=4.0.0
 email-validator>=2.0.0
 python-multipart>=0.0.9
+# Optional cache / shared-state backend. The app runs fine without a reachable
+# Redis (see app/core/redis_client.py); this only needs installing so the
+# client is importable when REDIS_URL is set. Pure Python, no size impact.
+redis>=5.0.0
 # NOTE: 'mistral>=0.1.0' is the OpenStack workflow service (WRONG package).
 # The Mistral AI LLM calls use plain httpx (see app/services/llm/mistral_provider.py)
 python-dotenv>=1.0.0

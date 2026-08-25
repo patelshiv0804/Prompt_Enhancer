@@ -6,8 +6,30 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import redis_client
+from app.core.config import settings
 from app.db.models import AIModel, Template
 from .base import BaseRepository
+
+
+async def invalidate_role_mode_cache(*roles: str) -> None:
+    """Drop the cached distinct role/mode lists.
+
+    Call this after approving, editing, or removing a template so the new
+    role/mode becomes visible immediately instead of waiting out
+    ``redis_ttl_roles_modes``. Pass the affected role(s) to also clear their
+    role-scoped mode lists. Safe to call when Redis is disabled.
+    """
+    keys = [
+        redis_client.make_key(redis_client.NS_ROLES),
+        redis_client.make_key(redis_client.NS_MODES),
+    ]
+    keys.extend(
+        redis_client.make_key(redis_client.NS_ROLE_MODES, role.strip().lower())
+        for role in roles
+        if role and role.strip()
+    )
+    await redis_client.delete(*keys)
 
 
 class TemplateRepository(BaseRepository[Template]):
@@ -98,17 +120,49 @@ class TemplateRepository(BaseRepository[Template]):
         rows = result.all()
         return [(row[0], 1.0 - float(row[1])) for row in rows if row[1] is not None]
 
+    # ── Distinct role / mode lists ────────────────────────────────────────
+    # These three run on every /enhance request but describe near-static
+    # reference data: the lists only change when a template is approved,
+    # edited, or removed. Caching them removes three Neon round-trips from
+    # every enhancement, and unlike prompt-keyed caches this one is shared by
+    # every user, so it effectively always hits.
+    #
+    # A Redis miss — including Redis being unavailable — falls straight
+    # through to the original query. Call invalidate_role_mode_cache() after
+    # changing templates rather than waiting out the TTL.
+
     async def get_distinct_roles(self, session: AsyncSession) -> list[str]:
+        key = redis_client.make_key(redis_client.NS_ROLES)
+        cached = await redis_client.get_json(key)
+        if isinstance(cached, list):
+            return cached
+
         statement = select(Template.role).distinct().where(Template.is_approved == True)
         result = await session.execute(statement)
-        return [r for r in result.scalars().all() if r]
+        roles = [r for r in result.scalars().all() if r]
+        await redis_client.set_json(key, roles, ttl=settings.redis_ttl_roles_modes)
+        return roles
 
     async def get_distinct_modes(self, session: AsyncSession) -> list[str]:
+        key = redis_client.make_key(redis_client.NS_MODES)
+        cached = await redis_client.get_json(key)
+        if isinstance(cached, list):
+            return cached
+
         statement = select(Template.mode).distinct().where(Template.is_approved == True)
         result = await session.execute(statement)
-        return [m for m in result.scalars().all() if m]
+        modes = [m for m in result.scalars().all() if m]
+        await redis_client.set_json(key, modes, ttl=settings.redis_ttl_roles_modes)
+        return modes
 
     async def get_distinct_modes_for_role(self, session: AsyncSession, role: str) -> list[str]:
+        # Keyed on the lowercased role because the query is case-insensitive —
+        # "Marketer" and "marketer" must resolve to the same entry.
+        key = redis_client.make_key(redis_client.NS_ROLE_MODES, (role or "").strip().lower())
+        cached = await redis_client.get_json(key)
+        if isinstance(cached, list):
+            return cached
+
         from sqlalchemy import func
         statement = (
             select(Template.mode)
@@ -117,4 +171,6 @@ class TemplateRepository(BaseRepository[Template]):
             .where(func.lower(Template.role) == func.lower(role))
         )
         result = await session.execute(statement)
-        return [m for m in result.scalars().all() if m]
+        modes = [m for m in result.scalars().all() if m]
+        await redis_client.set_json(key, modes, ttl=settings.redis_ttl_roles_modes)
+        return modes

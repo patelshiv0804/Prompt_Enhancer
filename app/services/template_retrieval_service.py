@@ -190,10 +190,12 @@ class TemplateRetrievalService:
 
             logger.info("Mode inferred/resolved: '%s' → '%s'", inferred_mode_val, resolved_mode)
 
-        # Generate temporary embedding for the user prompt
+        # Generate embedding for the user prompt — cached when Redis is
+        # available (same text always yields the same vector, so a cached
+        # result is indistinguishable from a fresh one).
         emb_start = time.perf_counter()
         try:
-            prompt_embedding = self.embedding_service.generate_for_prompt(prompt)
+            prompt_embedding = await self.embedding_service.generate_for_prompt_cached(prompt)
         except Exception as exc:
             logger.exception("Failed to generate embedding for prompt")
             raise EmbeddingGenerationError("Failed to generate prompt embedding.") from exc

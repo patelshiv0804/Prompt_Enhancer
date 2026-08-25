@@ -4,6 +4,8 @@ import json
 import logging
 from typing import Any
 
+from app.core import redis_client
+from app.core.config import settings
 from app.services.llm.base import BaseLLMProvider
 
 logger = logging.getLogger("promptiq.prompt_classification")
@@ -70,7 +72,20 @@ class PromptClassificationService:
             logger.debug("Classification static guard: deep (keyword match)")
             return {"level": "deep", "reason": "Prompt contains strategic or complex keywords."}
 
-        # ── LLM classification ─────────────────────────────────────────────
+        # ── LLM classification (Redis-cached) ──────────────────────────────
+        # temperature=0.0 makes this deterministic — the same prompt always
+        # yields the same level — so a cached answer is byte-identical to a
+        # fresh one and nothing about the user's result changes. (Contrast the
+        # enhancement call at temperature 0.3, where that variation is the
+        # whole point of the Regenerate button and must never be cached.)
+        cache_key = redis_client.make_key(
+            redis_client.NS_CLASSIFY, redis_client.hash_text(stripped)
+        )
+        cached = await redis_client.get_json(cache_key)
+        if isinstance(cached, dict) and cached.get("level") in ("minimal", "standard", "deep"):
+            logger.debug("Classification cache hit")
+            return cached
+
         try:
             classifier_prompt = _CLASSIFIER_PROMPT.format(prompt=stripped)
             result = await self.llm_provider.generate(
@@ -78,10 +93,18 @@ class PromptClassificationService:
                 max_tokens=120,
                 temperature=0.0,
             )
-            return self._parse(result.text)
+            parsed = self._parse(result.text)
         except Exception:
             logger.warning("Prompt classification failed; falling back to 'standard'", exc_info=True)
             return _FALLBACK_RESULT
+
+        # Never cache the fallback: a transient LLM hiccup or an unparseable
+        # reply would otherwise be pinned as this prompt's answer for a day.
+        if parsed is not _FALLBACK_RESULT:
+            await redis_client.set_json(
+                cache_key, parsed, ttl=settings.redis_ttl_classification
+            )
+        return parsed
 
     # ── Internal helpers ───────────────────────────────────────────────────
 

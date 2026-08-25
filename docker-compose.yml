@@ -19,6 +19,22 @@ services:
     networks:
       - promptiq-network
 
+  redis:
+    image: redis:7-alpine
+    container_name: promptiq-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - promptiq-network
+
   web:
     build:
       context: .
@@ -48,6 +64,7 @@ services:
       # Allow the browser extension's chrome-extension://<id> origin. Pin the
       # exact published origin in production instead of this dev-wide pattern.
       - CORS_ORIGIN_REGEX=${CORS_ORIGIN_REGEX:-chrome-extension://.*}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       # Match the image's baked-in Hugging Face cache location (see Dockerfile).
       - HF_HOME=/opt/hf-cache
     volumes:
@@ -60,6 +77,8 @@ services:
       - hfcache:/opt/hf-cache
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
     networks:
@@ -83,6 +102,8 @@ services:
 
 volumes:
   pgdata:
+    driver: local
+  redisdata:
     driver: local
   uploads:
     driver: local

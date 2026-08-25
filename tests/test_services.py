@@ -274,6 +274,11 @@ async def test_template_retrieval_uses_exact_role_mode_pair():
         def generate_for_prompt(self, prompt: str) -> list[float]:
             return [1.0]
 
+        async def generate_for_prompt_cached(self, prompt: str) -> list[float]:
+            # TemplateRetrievalService calls the cached variant; mirror the
+            # real service, where the cached path delegates to the sync one.
+            return self.generate_for_prompt(prompt)
+
     class FakeTemplateRepository:
         def __init__(self) -> None:
             self.search_calls = []
@@ -341,6 +346,11 @@ async def test_template_retrieval_resolves_mode_inside_resolved_role():
     class FakeEmbeddingService:
         def generate_for_prompt(self, prompt: str) -> list[float]:
             return [1.0]
+
+        async def generate_for_prompt_cached(self, prompt: str) -> list[float]:
+            # TemplateRetrievalService calls the cached variant; mirror the
+            # real service, where the cached path delegates to the sync one.
+            return self.generate_for_prompt(prompt)
 
     class FakeRoleResolver:
         async def resolve_role(self, role: str, distinct_roles: list[str]):

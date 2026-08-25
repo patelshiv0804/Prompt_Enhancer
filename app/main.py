@@ -7,6 +7,7 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.api.router import api_router
+from app.core import redis_client
 from app.core.config import settings
 from app.core.exceptions import http_error_handler
 from app.core.logging import setup_logging
@@ -257,6 +258,9 @@ def create_app() -> FastAPI:
         return {
             "status": "healthy" if db_status == "connected" else "unhealthy",
             "database": db_status,
+            # Reported for visibility only — Redis is an optional accelerator, so
+            # its state never affects the overall "healthy" verdict.
+            "redis": redis_client.status(),
             "environment": settings.environment,
         }
 
@@ -266,6 +270,11 @@ def create_app() -> FastAPI:
     async def startup_event() -> None:
         await verify_database_startup()
         await _warm_embedding_model()
+
+    @app.on_event("shutdown")
+    async def shutdown_event() -> None:
+        # Release Redis sockets on shutdown. A no-op when Redis was never used.
+        await redis_client.close_client()
 
     return app
 

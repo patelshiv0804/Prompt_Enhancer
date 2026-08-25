@@ -70,6 +70,45 @@ class Settings(BaseSettings):
     rate_limit_max_requests: int = 300
     rate_limit_window_seconds: int = 60
 
+    # ── Redis (optional) ──────────────────────────────────────────────────
+    # Empty redis_url (or redis_enabled=False) disables Redis entirely and the
+    # app falls back to its original in-process behaviour. Nothing breaks when
+    # Redis is absent or unreachable — see app/core/redis_client.py.
+    # Upstash and most managed providers require TLS: use rediss://...
+    redis_url: str = ""
+    redis_enabled: bool = True
+    redis_key_prefix: str = "promptiq"
+    # Kept short on purpose: a slow Redis must never dominate request latency.
+    redis_socket_timeout_seconds: float = 2.0
+    redis_connect_timeout_seconds: float = 2.0
+    redis_max_connections: int = 10
+    # After this many consecutive failures, stop dialling Redis for the
+    # cooldown window so a dead host can't add its timeout to every request.
+    redis_circuit_breaker_threshold: int = 3
+    redis_circuit_breaker_cooldown_seconds: int = 30
+
+    # ── Cache TTLs, in seconds ────────────────────────────────────────────
+    # Deliberately distinct per data type: each value is derived from how long
+    # that specific data stays meaningful, not from one shared default.
+    #
+    # Auth state — TTL is a safety net; the stored timestamp remains the
+    # authority, so each gets a small buffer over its logical lifetime.
+    redis_ttl_otp: int = 960                  # 16 min = otp_expire_minutes(15) + 1
+    redis_ttl_reset_token: int = 1080         # 18 min = reset token life(15) + 3
+    # Outlives the OTP on purpose: a brute-forcer must not be able to clear
+    # their failed-attempt count simply by waiting for the OTP to lapse.
+    redis_ttl_otp_attempts: int = 2700        # 45 min
+    #
+    # Reference data — changes only when an admin approves a template, which
+    # also means a manual flush is the real invalidation path.
+    redis_ttl_roles_modes: int = 21600        # 6 hours
+    #
+    # Derived data — deterministic, so it never goes stale; TTLs here exist to
+    # bound memory, and are ordered by payload size (smallest lives longest).
+    redis_ttl_classification: int = 86400     # 24 hours; tiny JSON, temperature=0.0
+    redis_ttl_embedding: int = 604800         # 7 days; ~3 KB per entry
+    redis_ttl_tool_embeddings: int = 2592000  # 30 days; derived from a static table
+
     # SMTP & OTP Config
     smtp_user: str = ""
     smtp_password: str = ""
