@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Optional, Any
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +23,14 @@ from app.api.v1.deps import (
     get_prompt_classification_service,
 )
 from app.api.v1.exceptions import map_service_error
-from app.services.exceptions import TemplateNotFoundError
+from app.services.exceptions import (
+    TemplateNotFoundError,
+    PromptValidationException,
+    PromptEnhancementException,
+    TemplateRenderException,
+    LLMTimeoutException,
+    LLMResponseException,
+)
 from app.services.prompt_enhancement_service import PromptEnhancementService
 from app.services.prompt_analysis_service import PromptAnalysisService
 from app.services.prompt_comparison_service import PromptComparisonService
@@ -31,6 +40,21 @@ from app.services.prompt_classification_service import PromptClassificationServi
 
 logger = logging.getLogger("promptiq.api.enhancement")
 router = APIRouter(tags=["Enhancement & Analysis"])
+
+
+# Strong references to fire-and-forget background tasks scheduled from inside a
+# streaming response. asyncio only keeps a weak reference to the task, so
+# without this set a task could be garbage-collected mid-run.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _sse(event: str, data: dict[str, Any]) -> str:
+    """Format a single Server-Sent Events frame.
+
+    ``event:`` names the event type the browser's reader dispatches on;
+    ``data:`` carries the JSON payload. A blank line terminates the frame.
+    """
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 # Request Models
@@ -335,6 +359,190 @@ async def enhance_prompt(
         )
     except Exception as exc:
         raise map_service_error(exc)
+
+
+@router.post(
+    "/enhance/stream",
+    summary="Enhance Prompt (Streaming, SSE)",
+    description=(
+        "Streaming counterpart of POST /enhance. Emits Server-Sent Events so the "
+        "client can render the optimized prompt token-by-token instead of waiting "
+        "for the full response. Event sequence: `meta` (template + detected depth) "
+        "→ many `token` frames (raw text deltas) → `done` (authoritative cleaned "
+        "prompt + persisted prompt_id). On failure a single `error` frame is sent. "
+        "Detailed quality scores are still computed in the background and fetched via "
+        "GET /prompts/{id}, exactly as with the non-streaming endpoint."
+    ),
+    response_class=StreamingResponse,
+)
+async def enhance_prompt_stream(
+    payload: EnhancePromptRequest,
+    session: AsyncSession = Depends(get_session),
+    current_user: Optional[str] = Depends(get_current_user),
+    enhancement_service: PromptEnhancementService = Depends(get_prompt_enhancement_service),
+    persistence_service: PromptPersistenceService = Depends(get_prompt_persistence_service),
+    profile_repo=Depends(get_profile_repository),
+    template_repo=Depends(get_template_repository),
+    classification_service: PromptClassificationService = Depends(get_prompt_classification_service),
+) -> StreamingResponse:
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+
+    # ---- Pre-stream setup ---------------------------------------------------
+    # Everything that can fail with a meaningful HTTP status (auth, profile,
+    # style-profile scoping, template override, level classification) runs here,
+    # BEFORE the response body starts. Once we return the StreamingResponse the
+    # status line is already 200 and errors can only be reported as SSE `error`
+    # frames — so we front-load anything that should surface as a real 4xx/5xx.
+    try:
+        profile = await profile_repo.get_by_email(session, current_user)
+        if not profile:
+            raise HTTPException(status_code=404, detail="Authenticated profile user not found.")
+
+        style_attributes = None
+        if payload.apply_style and payload.style_profile_id:
+            from app.db.models import StyleProfile
+            style_profile = await session.get(StyleProfile, payload.style_profile_id)
+            if not style_profile or style_profile.deleted_at is not None:
+                raise HTTPException(status_code=404, detail="Style profile not found.")
+            if style_profile.user_id is not None and str(style_profile.user_id) != str(profile.id):
+                raise HTTPException(status_code=404, detail="Style profile not found.")
+            style_attributes = style_profile.attributes
+
+        # Resolve enhancement level: forced override OR AI auto-detection
+        _valid_levels = {"minimal", "standard", "deep"}
+        if payload.enhancement_level and payload.enhancement_level.lower() in _valid_levels:
+            resolved_level = payload.enhancement_level.lower()
+            resolved_reason = f"Manually set to {resolved_level}."
+            logger.info("Enhancement level forced by user: %s", resolved_level)
+        else:
+            classification = await classification_service.classify(payload.prompt)
+            resolved_level = classification["level"]
+            resolved_reason = classification["reason"]
+            logger.info("Enhancement level auto-detected: %s (%s)", resolved_level, resolved_reason)
+
+        template_override = None
+        effective_role = payload.role
+        effective_mode = payload.mode
+        if payload.template_id is not None:
+            template_override = await template_repo.get_by_id(session, str(payload.template_id))
+            if not template_override or getattr(template_override, "deleted_at", None) is not None:
+                raise TemplateNotFoundError("Selected template not found.")
+            effective_role = template_override.role or payload.role
+            effective_mode = template_override.mode or payload.mode
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise map_service_error(exc)
+
+    # ---- Stream -------------------------------------------------------------
+    async def event_generator():
+        try:
+            final_ev: Optional[dict] = None
+            async for ev in enhancement_service.enhance_prompt_stream(
+                session=session,
+                role=effective_role,
+                mode=effective_mode,
+                prompt=payload.prompt,
+                variables=payload.variables,
+                style_attributes=style_attributes,
+                template_override=template_override,
+                enhancement_level=resolved_level,
+            ):
+                etype = ev.get("type")
+                if etype == "meta":
+                    yield _sse("meta", {
+                        "template": {
+                            "id": ev["template_id"],
+                            "title": ev["template_title"],
+                            "similarity": ev["similarity_score"],
+                        },
+                        "detected_level": resolved_level,
+                        "level_reason": resolved_reason,
+                    })
+                elif etype == "delta":
+                    yield _sse("token", {"text": ev["text"]})
+                elif etype == "final":
+                    final_ev = ev
+
+            if final_ev is None:
+                raise PromptEnhancementException("Streaming ended before producing a result.")
+
+            enhanced_text = final_ev["enhanced_prompt"]
+
+            # Persist the prompt + first version now that the full text is known.
+            # The request-scoped session stays open until this generator is
+            # exhausted, so the commit here (and the dependency's own trailing
+            # commit) both operate on a live session.
+            prompt_record = await persistence_service.create_prompt_with_version(
+                session=session,
+                user_id=str(profile.id),
+                original_prompt=payload.prompt,
+                enhanced_prompt=enhanced_text,
+                template_id=final_ev["template_id"],
+                old_analysis=None,
+                new_analysis=None,
+                grade=None,
+                title=f"{effective_role} - {effective_mode}",
+                tool_recommendations=None,
+            )
+            await session.commit()
+
+            # Fire-and-forget deep analysis. Can't use FastAPI BackgroundTasks
+            # here (no Response object to attach them to inside a generator), so
+            # schedule directly and hold a strong reference until it completes.
+            analysis_task = asyncio.create_task(
+                _process_background_analysis(
+                    prompt_id=str(prompt_record.id),
+                    original_prompt=payload.prompt,
+                    enhanced_prompt=enhanced_text,
+                    role=effective_role,
+                    mode=effective_mode,
+                )
+            )
+            _BACKGROUND_TASKS.add(analysis_task)
+            analysis_task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+            yield _sse("done", {
+                "original_prompt": payload.prompt,
+                "enhanced_prompt": enhanced_text,
+                "template": {
+                    "id": final_ev["template_id"],
+                    "title": final_ev["template_title"],
+                    "similarity": final_ev["similarity_score"],
+                },
+                "version": {
+                    "prompt_id": str(prompt_record.id),
+                    "version_number": 1,
+                },
+                "detected_level": resolved_level,
+                "level_reason": resolved_reason,
+            })
+        except (
+            PromptValidationException,
+            PromptEnhancementException,
+            TemplateRenderException,
+            TemplateNotFoundError,
+            LLMTimeoutException,
+            LLMResponseException,
+        ) as exc:
+            # These carry client-safe messages defined in our own service layer.
+            logger.warning("Streaming enhancement failed: %s", exc)
+            yield _sse("error", {"detail": str(exc)})
+        except Exception:
+            logger.exception("Unexpected error during streaming enhancement")
+            yield _sse("error", {"detail": "Prompt enhancement failed during streaming."})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Disable proxy buffering (nginx) so tokens flush immediately.
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post(

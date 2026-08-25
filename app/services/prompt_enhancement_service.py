@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import AsyncIterator
 from typing import Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -165,6 +166,126 @@ class PromptEnhancementService:
                 await self._backoff_sleep(current_try)
 
         raise PromptEnhancementException("Max retries exceeded during prompt optimization.")
+
+    async def enhance_prompt_stream(
+        self,
+        session: AsyncSession,
+        role: Optional[str] = None,
+        mode: Optional[str] = None,
+        prompt: str = "",
+        variables: Optional[dict[str, str]] = None,
+        style_attributes: Optional[dict[str, Any]] = None,
+        template_override: Optional[Any] = None,
+        enhancement_level: str = "standard",
+    ) -> AsyncIterator[dict]:
+        """Streaming counterpart of :meth:`enhance_prompt`.
+
+        Runs the same template retrieval / rendering / prompt-building steps,
+        then streams the LLM output as it is generated. Yields event dicts::
+
+            {"type": "meta",  "template_id", "template_title", "similarity_score"}
+            {"type": "delta", "text": "<raw fragment>"}          (repeated)
+            {"type": "final", "enhanced_prompt", "template_id", ...}
+
+        Unlike the blocking path there is no multi-attempt retry loop: tokens
+        are emitted as soon as they arrive, so a mid-stream failure cannot be
+        retried transparently. Callers should surface an error event and may
+        fall back to :meth:`enhance_prompt`.
+        """
+        logger.info("Starting streaming prompt enhancement request")
+
+        # STEP 1: Validate request parameters (mirrors enhance_prompt)
+        if not prompt or not prompt.strip():
+            raise PromptValidationException("Prompt content cannot be empty.")
+        if len(prompt) > 12000:
+            raise PromptValidationException(f"Prompt content is too long ({len(prompt)} chars). Max 12000 chars.")
+
+        # STEP 2: Template selection (explicit override or semantic retrieval)
+        if template_override is not None:
+            selected_temp = {
+                "id": str(template_override.id),
+                "title": template_override.title,
+                "body": template_override.body,
+            }
+            similarity_score = 1.0
+        else:
+            retrieval_res = await self.retrieval_service.retrieve_best_template(
+                session=session,
+                role=role,
+                mode=mode,
+                prompt=prompt,
+                variables=variables,
+            )
+            selected_temp = retrieval_res["selected_template"]
+            similarity_score = retrieval_res["similarity_score"]
+        template_id = selected_temp["id"]
+        template_body = selected_temp["body"]
+
+        # STEP 3: Render placeholders inside the template body
+        try:
+            rendered_template = self.template_renderer.render(
+                template_body=template_body,
+                user_prompt=prompt,
+                variables=variables,
+            )
+        except TemplateRenderException as exc:
+            logger.exception("Template rendering failed")
+            raise exc
+        except Exception as exc:
+            logger.exception("Unexpected rendering error")
+            raise TemplateRenderException("Unexpected error during template variable rendering.") from exc
+
+        # STEP 4: Build the final prompt. Single attempt — streaming cannot
+        # transparently retry once bytes have been sent to the client.
+        final_prompt = self.prompt_builder.build_final_prompt(
+            role=role,
+            mode=mode,
+            rendered_template=rendered_template,
+            system_instructions=None,
+            style_attributes=style_attributes,
+            enhancement_level=enhancement_level,
+        )
+
+        # Emit template metadata up front so the client can render context
+        # (template name, similarity) before the first token arrives.
+        yield {
+            "type": "meta",
+            "template_id": template_id,
+            "template_title": selected_temp["title"],
+            "similarity_score": similarity_score,
+        }
+
+        # STEP 5: Stream tokens, accumulating raw text for post-processing.
+        logger.info("Streaming LLM provider. Compiled prompt size: %d chars", len(final_prompt))
+        start_time = time.perf_counter()
+        buffer: list[str] = []
+        async for delta in self.llm_provider.optimize_prompt_stream(
+            prompt=final_prompt,
+            max_tokens=settings.mistral_optimization_max_tokens,
+        ):
+            buffer.append(delta)
+            yield {"type": "delta", "text": delta}
+        latency = time.perf_counter() - start_time
+
+        raw_output = "".join(buffer)
+        enhanced_prompt = self._clean_enhanced_output(raw_output)
+
+        if not enhanced_prompt or not isinstance(enhanced_prompt, str):
+            raise LLMResponseException("Mistral returned an empty or invalid content response.")
+
+        # Best-effort guard: the blocking path retries on task-execution slips,
+        # but a stream has already emitted its bytes, so we only log here.
+        if self.is_task_execution(enhanced_prompt, prompt):
+            logger.warning("Streamed Mistral output looks like direct task execution (not retried in stream mode).")
+
+        logger.info("Streaming prompt enhanced successfully. Latency: %.4fs", latency)
+        yield {
+            "type": "final",
+            "enhanced_prompt": enhanced_prompt,
+            "template_id": template_id,
+            "template_title": selected_temp["title"],
+            "similarity_score": similarity_score,
+        }
 
     async def _backoff_sleep(self, attempt: int) -> None:
         sleep_time = 2 ** attempt

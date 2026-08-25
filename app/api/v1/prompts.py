@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import Optional, Any
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pydantic import BaseModel, Field
@@ -27,7 +29,7 @@ from app.api.v1.deps import (
 from app.services.tool_recommendation_service import ToolRecommendationService
 from app.api.v1.exceptions import map_service_error
 from app.core.security import get_current_user_id
-from app.services.exceptions import PromptNotFoundError
+from app.services.exceptions import PromptNotFoundError, PromptVersionException, DatabaseTransactionException
 from app.schemas.common import APIResponse, ErrorResponse, PaginatedResponse
 from app.schemas.prompt import (
     PromptDetailResponse,
@@ -51,6 +53,14 @@ from app.services.prompt_search_service import PromptSearchService
 
 logger = logging.getLogger("promptiq.api.prompts")
 router = APIRouter(prefix="/prompts", tags=["prompts"])
+
+
+def _sse(event: str, data: dict[str, Any]) -> str:
+    """Format a single Server-Sent Events frame (mirror of the helper in
+    enhancement.py). ``event:`` names the event type the client dispatches on;
+    ``data:`` carries the JSON payload; a blank line terminates the frame.
+    """
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def _assert_owner(prompt, user_id: UUID) -> None:
@@ -536,3 +546,81 @@ async def reenhance_prompt(
         return ReenhanceVersionResponse(**result)
     except Exception as exc:
         raise map_service_error(exc)
+
+
+@router.post(
+    "/{prompt_id}/reenhance/stream",
+    summary="Re-enhance Prompt (Streaming, SSE)",
+    description=(
+        "Streaming counterpart of POST /prompts/{prompt_id}/reenhance. Emits "
+        "Server-Sent Events so the client renders the re-enhanced prompt "
+        "token-by-token. Event sequence: `meta` (template) → many `token` frames "
+        "(raw text deltas) → `done` (persisted new version + per-version quality "
+        "scores and tool recommendations). On failure a single `error` frame is sent. "
+        "Unlike the initial enhancement, scores are computed synchronously and "
+        "delivered inside the `done` frame, so no follow-up polling is required."
+    ),
+    response_class=StreamingResponse,
+)
+async def reenhance_prompt_stream(
+    prompt_id: str,
+    session: AsyncSession = Depends(get_session),
+    user_id: UUID = Depends(get_current_user_id),
+    prompt_service: PromptService = Depends(get_prompt_service),
+    reenhance_service: PromptReenhanceService = Depends(get_prompt_reenhance_service),
+) -> StreamingResponse:
+    # Pre-stream ownership check so a missing/forbidden prompt returns a real
+    # 404 before the 200 event-stream begins (mirrors the blocking endpoint).
+    # Once the StreamingResponse is returned the status line is already 200, so
+    # anything that must surface as a real HTTP status has to run here first.
+    try:
+        prompt = await prompt_service.get_prompt(session, prompt_id)
+        _assert_owner(prompt, user_id)
+    except Exception as exc:
+        raise map_service_error(exc)
+
+    async def event_generator():
+        try:
+            final_ev: Optional[dict] = None
+            async for ev in reenhance_service.reenhance_prompt_stream(
+                session=session,
+                prompt_id=prompt_id,
+            ):
+                etype = ev.get("type")
+                if etype == "meta":
+                    yield _sse("meta", {
+                        "template": {
+                            "id": ev["template_id"],
+                            "title": ev["template_title"],
+                            "similarity": ev["similarity_score"],
+                        },
+                    })
+                elif etype == "delta":
+                    yield _sse("token", {"text": ev["text"]})
+                elif etype == "final":
+                    final_ev = ev
+
+            if final_ev is None:
+                raise PromptVersionException("Re-enhance stream ended before producing a result.")
+
+            # The service already persisted + committed the new version; the
+            # `done` frame carries the same data the blocking endpoint returns.
+            yield _sse("done", final_ev["data"])
+        except (PromptNotFoundError, PromptVersionException, DatabaseTransactionException) as exc:
+            # Client-safe messages defined in our own service layer.
+            logger.warning("Streaming re-enhancement failed: %s", exc)
+            yield _sse("error", {"detail": str(exc)})
+        except Exception:
+            logger.exception("Unexpected error during streaming re-enhancement")
+            yield _sse("error", {"detail": "Prompt re-enhancement failed during streaming."})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Disable proxy buffering (nginx) so tokens flush immediately.
+            "X-Accel-Buffering": "no",
+        },
+    )

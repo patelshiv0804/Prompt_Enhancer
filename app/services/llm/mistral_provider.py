@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -104,6 +106,78 @@ class MistralProvider(BaseLLMProvider):
                 "max_tokens": payload["max_tokens"],
             },
         )
+
+    async def optimize_prompt_stream(self, prompt: str, **kwargs) -> AsyncIterator[str]:
+        """Stream the optimized prompt token-by-token from Mistral.
+
+        Yields text deltas as they arrive. Mistral's /chat/completions endpoint
+        with ``stream=True`` emits Server-Sent Events in OpenAI's chunk format::
+
+            data: {"choices":[{"delta":{"content":"Act"}}]}
+            data: {"choices":[{"delta":{"content":" as"}}]}
+            ...
+            data: [DONE]
+
+        Only the ``delta.content`` fragments are surfaced; framing lines and the
+        terminal ``[DONE]`` sentinel are consumed internally.
+        """
+        logger.info("Streaming prompt optimization with Mistral provider")
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+            "temperature": kwargs.get("temperature", self.temperature),
+            "stream": True,
+        }
+        timeout = httpx.Timeout(self.timeout, connect=self.timeout)
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream(
+                    "POST", self.endpoint, json=payload, headers=self.headers
+                ) as response:
+                    # Drain the body before raise_for_status so the error detail
+                    # is available (httpx won't read a streamed body on its own).
+                    if response.status_code >= 400:
+                        await response.aread()
+                        response.raise_for_status()
+
+                    async for line in response.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data = line[len("data:"):].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            # Ignore keep-alive/comment frames or partial lines.
+                            continue
+                        delta = self._extract_delta(chunk)
+                        if delta:
+                            yield delta
+        except httpx.ReadTimeout as exc:
+            logger.exception("Mistral streaming request timed out")
+            raise LLMTimeoutError("Mistral streaming request timed out.") from exc
+        except httpx.HTTPStatusError as exc:
+            logger.exception(
+                "Mistral streaming failed with status %s", exc.response.status_code
+            )
+            raise LLMRequestError("Mistral streaming request failed.") from exc
+        except LLMError:
+            raise
+        except Exception as exc:
+            logger.exception("Mistral provider streaming error")
+            raise LLMProviderError("Unexpected Mistral provider streaming error.") from exc
+
+    def _extract_delta(self, chunk: dict[str, Any]) -> str:
+        choice = self._first_choice(chunk)
+        if isinstance(choice, dict):
+            delta = choice.get("delta")
+            if isinstance(delta, dict):
+                content = delta.get("content")
+                if isinstance(content, str):
+                    return content
+        return ""
 
     async def generate(self, prompt: str, **kwargs) -> GenerationResult:
         logger.info("Generating text with Mistral provider")
