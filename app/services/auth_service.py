@@ -23,7 +23,13 @@ from app.core.exceptions import (
 )
 import logging
 logger = logging.getLogger(__name__)
-from app.core.security import create_access_token, hash_password, verify_password
+from app.core.security import (
+    create_access_token,
+    hash_password,
+    hash_password_async,
+    verify_password,
+    verify_password_async,
+)
 from app.db.models import User
 from app.repositories.authRepository import AuthRepository
 from app.schemas.auth import TokenResponse
@@ -90,7 +96,7 @@ class AuthService:
         if await self.repo.exists_by_email(email):
             raise AlreadyExistsException("User with this email")
 
-        hashed = hash_password(password)
+        hashed = await hash_password_async(password)
         user = await self.repo.create(email=email, hashed_password=hashed)
         logger.info(f"User registered: {user.id}")
         return user
@@ -98,7 +104,7 @@ class AuthService:
     async def login(self, email: str, password: str) -> TokenResponse:
         """Authenticate user and return JWT token."""
         user = await self.repo.get_by_email(email)
-        if not user or not verify_password(password, user.hashed_password):
+        if not user or not await verify_password_async(password, user.hashed_password):
             raise UnauthorizedException("Invalid email or password")
         if not user.is_active:
             raise UnauthorizedException("Account is deactivated")
@@ -150,7 +156,7 @@ class AuthService:
                     raise UnauthorizedException("Account is deactivated")
                 user = await self.repo.update_google_identity(user.id, google_sub=google_sub, is_verified=True)
             else:
-                generated_password = hash_password(secrets.token_urlsafe(32))
+                generated_password = await hash_password_async(secrets.token_urlsafe(32))
                 user = await self.repo.create(
                     email=email,
                     hashed_password=generated_password,
@@ -462,7 +468,7 @@ class AuthService:
         if not user:
             raise NotFoundException("User")
 
-        hashed = hash_password(new_password)
+        hashed = await hash_password_async(new_password)
         await self.repo.update_password(user.id, hashed)
         await self.db.commit()
         # Consume the token so it can never be reused — in both stores.

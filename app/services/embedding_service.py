@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import List
 
@@ -49,6 +50,21 @@ class EmbeddingService:
             raise EmbeddingGenerationError("Prompt text must not be empty.")
         return self.generate([prompt])[0]
 
+    # ── Non-blocking async variants ──────────────────────────────────────
+    # model.encode() is CPU-bound (neural network inference). These wrappers
+    # offload the work to a thread so the event loop stays free for other
+    # requests. Every async caller should prefer these over the sync versions.
+
+    async def generate_async(self, texts: List[str]) -> List[float]:
+        """Thread-safe async wrapper around generate()."""
+        return await asyncio.to_thread(self.generate, texts)
+
+    async def generate_for_prompt_async(self, prompt: str) -> List[float]:
+        """Thread-safe async wrapper around generate_for_prompt()."""
+        if not prompt.strip():
+            raise EmbeddingGenerationError("Prompt text must not be empty.")
+        return await asyncio.to_thread(self.generate_for_prompt, prompt)
+
     async def generate_for_prompt_cached(self, prompt: str) -> List[float]:
         """Redis-cached variant of generate_for_prompt.
 
@@ -80,7 +96,7 @@ class EmbeddingService:
         ):
             return cached
 
-        embedding = self.generate_for_prompt(prompt)
+        embedding = await self.generate_for_prompt_async(prompt)
         await redis_client.set_json(key, embedding, ttl=settings.redis_ttl_embedding)
         return embedding
 

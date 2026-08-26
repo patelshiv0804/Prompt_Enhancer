@@ -36,7 +36,7 @@ async def health_check(
     # 2. Embedding Model Check
     emb_status = "active"
     try:
-        emb.generate_for_prompt("health check")
+        await emb.generate_for_prompt_async("health check")
     except Exception:
         emb_status = "failed"
 
@@ -87,7 +87,7 @@ async def readiness(
     # 2. Embedding Model Check
     emb_ok = True
     try:
-        emb.generate_for_prompt("health check")
+        await emb.generate_for_prompt_async("health check")
     except Exception:
         emb_ok = False
 

@@ -33,8 +33,8 @@ class PromptSimilarityService:
     ) -> float:
         logger.info("Calculating similarity between two raw prompts")
         try:
-            emb1 = self.embedding_service.generate_for_prompt(prompt1)
-            emb2 = self.embedding_service.generate_for_prompt(prompt2)
+            emb1 = await self.embedding_service.generate_for_prompt_async(prompt1)
+            emb2 = await self.embedding_service.generate_for_prompt_async(prompt2)
             u = np.array(emb1)
             v = np.array(emb2)
             # Dot product since embeddings are unit L2 normalized
@@ -56,7 +56,7 @@ class PromptSimilarityService:
 
         start_time = time.perf_counter()
         try:
-            query_vector = self.embedding_service.generate_for_prompt(prompt_text)
+            query_vector = await self.embedding_service.generate_for_prompt_async(prompt_text)
         except Exception as exc:
             logger.exception("Failed to generate query embedding for similar prompt search")
             raise EmbeddingGenerationException("Failed to generate query embedding.") from exc

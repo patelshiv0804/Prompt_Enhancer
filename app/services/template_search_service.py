@@ -46,7 +46,7 @@ class TemplateSearchService:
         logger.info("Template search started for mode=%s role=%s top_k=%d threshold=%s", mode, role, top_k, threshold)
 
         try:
-            prompt_embedding = self.embedding_service.generate_for_prompt(user_prompt)
+            prompt_embedding = await self.embedding_service.generate_for_prompt_async(user_prompt)
         except EmbeddingGenerationError as exc:
             raise TemplateSearchError("Failed to generate prompt embedding.") from exc
 

@@ -56,14 +56,14 @@ class ToolRecommendationService:
         await self._ensure_embeddings_cached()
 
         # 1. Resolve prompt match (highest intent signal)
-        prompt_match = self._resolve_single_text(prompt, text_type="prompt")
+        prompt_match = await self._resolve_single_text(prompt, text_type="prompt")
 
         # 2. Resolve explicit signal match (mode first, then role)
         explicit_match = None
         if mode and mode.strip():
-            explicit_match = self._resolve_single_text(mode, text_type="mode")
+            explicit_match = await self._resolve_single_text(mode, text_type="mode")
         if not explicit_match and role and role.strip():
-            explicit_match = self._resolve_single_text(role, text_type="role")
+            explicit_match = await self._resolve_single_text(role, text_type="role")
 
         # 3. Dual-Signal Priority Resolution
         if prompt_match and explicit_match:
@@ -115,7 +115,7 @@ class ToolRecommendationService:
 
     # ── Single-Text Match Resolver (Exact → Alias → Semantic → Keyword) ──
 
-    def _resolve_single_text(self, text: str, text_type: str) -> Optional[dict]:
+    async def _resolve_single_text(self, text: str, text_type: str) -> Optional[dict]:
         """Resolve a single text input across exact, alias, semantic, and keyword matchers."""
         if not text or not text.strip():
             return None
@@ -133,7 +133,7 @@ class ToolRecommendationService:
             return alias
 
         # 3. Semantic match (if embeddings cached)
-        semantic = self._semantic_match(text)
+        semantic = await self._semantic_match(text)
         if semantic:
             semantic["match_type"] = f"{text_type}_semantic" if text_type != "prompt" else "prompt_semantic"
             return semantic
@@ -191,12 +191,12 @@ class ToolRecommendationService:
 
     # ── Semantic Matching ─────────────────────────────────────────────
 
-    def _semantic_match(self, text: str) -> Optional[dict]:
+    async def _semantic_match(self, text: str) -> Optional[dict]:
         if not text or not text.strip() or self._task_embeddings is None:
             return None
 
         try:
-            text_emb = self.embedding_service.generate_for_prompt(text)
+            text_emb = await self.embedding_service.generate_for_prompt_async(text)
             best_task = None
             best_score = -1.0
 
@@ -296,7 +296,7 @@ class ToolRecommendationService:
             cache = []
             for idx, entry in enumerate(TOOL_RANKINGS):
                 task_label = entry["task"]
-                emb = self.embedding_service.generate_for_prompt(task_label)
+                emb = await self.embedding_service.generate_for_prompt_async(task_label)
                 cache.append((task_label, idx, emb))
 
             ToolRecommendationService._task_embeddings = cache

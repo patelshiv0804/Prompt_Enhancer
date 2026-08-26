@@ -52,7 +52,7 @@ class PromptEmbeddingService:
             logger.debug("Generating embedding from text: '%s'", embedding_source)
 
             # Generate 384-dimensional embedding
-            embedding = self.embedding_service.generate_for_prompt(embedding_source)
+            embedding = await self.embedding_service.generate_for_prompt_async(embedding_source)
             
             # Save directly to prompts.embedding
             prompt.embedding = embedding

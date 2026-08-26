@@ -37,7 +37,7 @@ class PromptRecommendationService:
 
         start_time = time.perf_counter()
         try:
-            vector = self.embedding_service.generate_for_prompt(prompt_text)
+            vector = await self.embedding_service.generate_for_prompt_async(prompt_text)
         except Exception as exc:
             logger.exception("Failed to generate embedding for recommendations")
             raise EmbeddingGenerationException("Failed to generate prompt embedding.") from exc

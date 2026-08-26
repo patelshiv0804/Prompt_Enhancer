@@ -28,13 +28,13 @@ class RoleResolutionService:
 
         try:
             # Generate embedding for the input role
-            role_emb = self.embedding_service.generate_for_prompt(role)
+            role_emb = await self.embedding_service.generate_for_prompt_async(role)
 
             best_role = distinct_roles[0]
             best_score = -1.0
 
             for candidate in distinct_roles:
-                cand_emb = self.embedding_service.generate_for_prompt(candidate)
+                cand_emb = await self.embedding_service.generate_for_prompt_async(candidate)
                 # Compute cosine similarity (dot product of normalized embeddings)
                 similarity = sum(x * y for x, y in zip(role_emb, cand_emb))
                 if similarity > best_score:
