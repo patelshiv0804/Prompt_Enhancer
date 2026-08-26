@@ -30,6 +30,8 @@ from app.services.exceptions import (
     TemplateRenderException,
     LLMTimeoutException,
     LLMResponseException,
+    SimilarityBelowThresholdError,
+    NoTemplateMatchError,
 )
 from app.services.prompt_enhancement_service import PromptEnhancementService
 from app.services.prompt_analysis_service import PromptAnalysisService
@@ -530,10 +532,15 @@ async def enhance_prompt_stream(
             TemplateNotFoundError,
             LLMTimeoutException,
             LLMResponseException,
+            SimilarityBelowThresholdError,
+            NoTemplateMatchError,
         ) as exc:
-            # These carry client-safe messages defined in our own service layer.
+            if isinstance(exc, (SimilarityBelowThresholdError, NoTemplateMatchError)):
+                err_detail = "Try selecting a specific role or mode, or rephrasing your prompt."
+            else:
+                err_detail = str(exc)
             logger.warning("Streaming enhancement failed: %s", exc)
-            yield _sse("error", {"detail": str(exc)})
+            yield _sse("error", {"detail": err_detail})
         except Exception:
             logger.exception("Unexpected error during streaming enhancement")
             yield _sse("error", {"detail": "Prompt enhancement failed during streaming."})

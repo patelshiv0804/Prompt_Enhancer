@@ -17,13 +17,22 @@ from app.services.exceptions import (
     TemplateRenderException,
     PromptAnalysisException,
     PromptComparisonException,
+    SimilarityBelowThresholdError,
+    NoTemplateMatchError,
 )
 
 
 def map_service_error(exc: Exception) -> HTTPException:
+    # 400 Bad Request — Template Similarity Below Threshold / No Match
+    if isinstance(exc, (SimilarityBelowThresholdError, NoTemplateMatchError)):
+        return HTTPException(
+            status_code=400,
+            detail="Try selecting a specific role or mode, or rephrasing your prompt.",
+        )
+
     # 404 Not Found Errors
     if isinstance(exc, (PromptNotFoundError, TemplateNotFoundError, VersionNotFoundError, NoTemplatesFoundError)):
-        return HTTPException(status_code=404, detail=str(exc))
+        return HTTPException(status_code=404, detail="Requested resource or matching template was not found.")
 
     # 422 Unprocessable Entity / Validation Errors
     if isinstance(exc, (PromptValidationException, InvalidRoleError, InvalidModeError, TemplateRenderException)):
@@ -43,7 +52,7 @@ def map_service_error(exc: Exception) -> HTTPException:
         PromptAnalysisException,
         PromptComparisonException
     )):
-        return HTTPException(status_code=500, detail=str(exc))
+        return HTTPException(status_code=500, detail="An internal server error occurred while processing your prompt.")
 
     # Fallback to 400 Bad Request
-    return HTTPException(status_code=400, detail=str(exc))
+    return HTTPException(status_code=400, detail="An error occurred while processing your request. Please try again.")
