@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -26,6 +27,54 @@ from app.services.llm.schemas import (
 logger = logging.getLogger("promptiq.llm.mistral")
 
 
+# ── Shared HTTP client ────────────────────────────────────────────────────
+# A single process-wide httpx.AsyncClient is reused for every Mistral call so
+# the TLS handshake is paid once and warm keepalive connections are reused,
+# instead of building (and tearing down) a fresh connection pool per request —
+# which added 100-300ms per call and risked ephemeral-port/socket exhaustion
+# under load. Created lazily on first use (inside the running event loop) and
+# closed on application shutdown via close_shared_client().
+_shared_client: httpx.AsyncClient | None = None
+_client_lock: asyncio.Lock | None = None
+
+
+def _get_client_lock() -> asyncio.Lock:
+    # Created lazily so it always binds to the active event loop.
+    global _client_lock
+    if _client_lock is None:
+        _client_lock = asyncio.Lock()
+    return _client_lock
+
+
+async def get_shared_client() -> httpx.AsyncClient:
+    """Return the process-wide Mistral HTTP client, creating it on first use."""
+    global _shared_client
+    if _shared_client is not None and not _shared_client.is_closed:
+        return _shared_client
+    async with _get_client_lock():
+        # Another coroutine may have created it while we waited for the lock.
+        if _shared_client is not None and not _shared_client.is_closed:
+            return _shared_client
+        timeout = httpx.Timeout(
+            settings.mistral_timeout,
+            connect=settings.mistral_connect_timeout,
+        )
+        limits = httpx.Limits(
+            max_connections=settings.httpx_max_connections,
+            max_keepalive_connections=settings.httpx_max_keepalive_connections,
+        )
+        _shared_client = httpx.AsyncClient(timeout=timeout, limits=limits)
+        return _shared_client
+
+
+async def close_shared_client() -> None:
+    """Close the shared client on shutdown. Safe if it was never created."""
+    global _shared_client
+    client, _shared_client = _shared_client, None
+    if client is not None and not client.is_closed:
+        await client.aclose()
+
+
 class MistralProvider(BaseLLMProvider):
     def __init__(self) -> None:
         if not settings.mistral_api_key:
@@ -43,21 +92,20 @@ class MistralProvider(BaseLLMProvider):
         }
 
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
-        timeout = httpx.Timeout(self.timeout, connect=self.timeout)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            try:
-                response = await client.post(self.endpoint, json=payload, headers=self.headers)
-                response.raise_for_status()
-                return response.json()
-            except httpx.ReadTimeout as exc:
-                logger.exception("Mistral request timed out")
-                raise LLMTimeoutError("Mistral request timed out.") from exc
-            except httpx.HTTPStatusError as exc:
-                logger.exception("Mistral request failed with status %s", exc.response.status_code)
-                raise LLMRequestError("Mistral request failed.") from exc
-            except Exception as exc:
-                logger.exception("Mistral provider error")
-                raise LLMProviderError("Unexpected Mistral provider error.") from exc
+        client = await get_shared_client()
+        try:
+            response = await client.post(self.endpoint, json=payload, headers=self.headers)
+            response.raise_for_status()
+            return response.json()
+        except httpx.ReadTimeout as exc:
+            logger.exception("Mistral request timed out")
+            raise LLMTimeoutError("Mistral request timed out.") from exc
+        except httpx.HTTPStatusError as exc:
+            logger.exception("Mistral request failed with status %s", exc.response.status_code)
+            raise LLMRequestError("Mistral request failed.") from exc
+        except Exception as exc:
+            logger.exception("Mistral provider error")
+            raise LLMProviderError("Unexpected Mistral provider error.") from exc
 
     async def analyze_prompt(self, prompt: str, **kwargs) -> PromptAnalysisResult:
         logger.info("Analyzing prompt with Mistral provider")
@@ -129,32 +177,31 @@ class MistralProvider(BaseLLMProvider):
             "temperature": kwargs.get("temperature", self.temperature),
             "stream": True,
         }
-        timeout = httpx.Timeout(self.timeout, connect=self.timeout)
+        client = await get_shared_client()
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                async with client.stream(
-                    "POST", self.endpoint, json=payload, headers=self.headers
-                ) as response:
-                    # Drain the body before raise_for_status so the error detail
-                    # is available (httpx won't read a streamed body on its own).
-                    if response.status_code >= 400:
-                        await response.aread()
-                        response.raise_for_status()
+            async with client.stream(
+                "POST", self.endpoint, json=payload, headers=self.headers
+            ) as response:
+                # Drain the body before raise_for_status so the error detail
+                # is available (httpx won't read a streamed body on its own).
+                if response.status_code >= 400:
+                    await response.aread()
+                    response.raise_for_status()
 
-                    async for line in response.aiter_lines():
-                        if not line or not line.startswith("data:"):
-                            continue
-                        data = line[len("data:"):].strip()
-                        if data == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data)
-                        except json.JSONDecodeError:
-                            # Ignore keep-alive/comment frames or partial lines.
-                            continue
-                        delta = self._extract_delta(chunk)
-                        if delta:
-                            yield delta
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[len("data:"):].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
+                        # Ignore keep-alive/comment frames or partial lines.
+                        continue
+                    delta = self._extract_delta(chunk)
+                    if delta:
+                        yield delta
         except httpx.ReadTimeout as exc:
             logger.exception("Mistral streaming request timed out")
             raise LLMTimeoutError("Mistral streaming request timed out.") from exc

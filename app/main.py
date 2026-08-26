@@ -11,7 +11,8 @@ from app.core import redis_client
 from app.core.config import settings
 from app.core.exceptions import http_error_handler
 from app.core.logging import setup_logging
-from app.db.session import verify_database_startup
+from app.db.session import ensure_vector_indexes, verify_database_startup
+from app.middleware.logging import LoggingMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 
 logger = logging.getLogger("promptiq.startup")
@@ -89,6 +90,13 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
     )
+
+    # Correlation-ID + access logging. Added last so it wraps every other
+    # middleware (outermost): a correlation id is assigned before anything else
+    # runs and the timing/log covers the full request, including the CORS and
+    # rate-limit layers. Emits x-correlation-id and x-response-time response
+    # headers so a production request can be traced end-to-end (N8).
+    app.add_middleware(LoggingMiddleware)
 
     @app.get("/docs", include_in_schema=False)
     async def custom_swagger_ui_html() -> HTMLResponse:
@@ -269,12 +277,18 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def startup_event() -> None:
         await verify_database_startup()
+        # Ensure the pgvector ANN indexes exist (safety net alongside the
+        # Alembic migration). Idempotent and non-fatal.
+        await ensure_vector_indexes()
         await _warm_embedding_model()
 
     @app.on_event("shutdown")
     async def shutdown_event() -> None:
         # Release Redis sockets on shutdown. A no-op when Redis was never used.
         await redis_client.close_client()
+        # Close the shared Mistral HTTP client's connection pool.
+        from app.services.llm.mistral_provider import close_shared_client
+        await close_shared_client()
 
     return app
 

@@ -279,6 +279,30 @@ async def incr_with_ttl(key: str, ttl: int) -> Optional[int]:
         return None
 
 
+async def incr_fixed_window(key: str, window_seconds: int) -> Optional[int]:
+    """Increment a fixed-window counter, setting the expiry only when the
+    window first opens (count == 1).
+
+    Unlike :func:`incr_with_ttl`, the TTL is *not* refreshed on every hit, so
+    the window is a true fixed interval that resets ``window_seconds`` after the
+    first request rather than sliding forward on each call. Returns the new
+    count, or None when Redis is unavailable so the caller can fall back to a
+    local counter.
+    """
+    client = await get_client()
+    if client is None:
+        return None
+    try:
+        count = await client.incr(key)
+        if count == 1:
+            await client.expire(key, max(1, int(window_seconds)))
+        _record_success()
+        return int(count)
+    except Exception as exc:
+        _record_failure(exc, "incr_fixed_window")
+        return None
+
+
 async def ping() -> bool:
     """Round-trip check for /health."""
     client = await get_client()

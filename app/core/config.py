@@ -23,6 +23,16 @@ class Settings(BaseSettings):
     mistral_temperature: float = 0.3
     mistral_max_tokens: int = 1024
     mistral_optimization_max_tokens: int = 8192
+    # Connect timeout for the shared Mistral HTTP client. Kept short and
+    # separate from the (long) read timeout so a dead/slow TCP+TLS handshake
+    # fails fast instead of waiting the full mistral_timeout.
+    mistral_connect_timeout: float = 5.0
+    # Bounds for the process-wide shared httpx.AsyncClient connection pool
+    # (reused across all Mistral calls instead of opening a new TLS connection
+    # per request). Keepalive lets warm connections be reused; max_connections
+    # caps concurrent sockets so bursts can't exhaust ephemeral ports.
+    httpx_max_connections: int = 100
+    httpx_max_keepalive_connections: int = 20
     max_retries: int = 3
     prompt_analysis_model: str = "mistral-large-latest"
     prompt_analysis_temperature: float = 0.2
@@ -69,6 +79,35 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     rate_limit_max_requests: int = 300
     rate_limit_window_seconds: int = 60
+
+    # Tighter per-IP limit for the expensive LLM routes (enhance / analyze /
+    # compare / tool-recommend). Each of these costs an upstream LLM call, so
+    # they get their own bucket, far stricter than the coarse global limiter
+    # above. Enforced by a Redis-backed limiter (shared across workers) that
+    # falls back to a per-process counter when Redis is unavailable.
+    llm_rate_limit_max_requests: int = 20
+    llm_rate_limit_window_seconds: int = 60
+    # Hard cap on the length of any single prompt field accepted by the LLM
+    # routes. Oversized bodies are rejected at validation time (HTTP 422) before
+    # they reach the model — bounding both memory use and per-request LLM cost.
+    # Sized to comfortably fit a full deep-enhancement output (the mistral
+    # optimization cap is 8192 tokens ~= 32k chars), since that output may be
+    # re-submitted to /analyze or /compare — while still rejecting the multi-MB
+    # bodies a cost/OOM attack would use. The per-IP LLM rate limit above is the
+    # complementary control on sustained cost.
+    max_prompt_chars: int = 40000
+
+    # ── Database connection pool ──────────────────────────────────────────
+    # Explicit pool sizing + health checks for the async engine. pool_pre_ping
+    # discards connections a proxy/DB closed while idle (avoids stale-connection
+    # 500s after quiet periods); pool_recycle proactively retires connections
+    # before typical server-side idle timeouts. Keep
+    # db_pool_size * WEB_CONCURRENCY below your Postgres max_connections.
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    db_pool_timeout: float = 30.0
+    db_pool_recycle: int = 1800
+    db_pool_pre_ping: bool = True
 
     # ── Redis (optional) ──────────────────────────────────────────────────
     # Empty redis_url (or redis_enabled=False) disables Redis entirely and the

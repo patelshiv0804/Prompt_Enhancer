@@ -80,5 +80,20 @@ USER appuser
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/api/v1/health/ || exit 1
 
-# Start FastAPI application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start FastAPI. Shell form so $PORT (Render injects it) and $WEB_CONCURRENCY
+# are expanded at runtime. WEB_CONCURRENCY controls the number of Uvicorn worker
+# processes — each is a separate process on its own core, so N workers serve N
+# CPU-bound requests truly in parallel (a single worker serialises them).
+#
+# MEMORY WARNING: every worker loads its OWN copy of the sentence-transformers
+# embedding model (~300-400 MB resident incl. PyTorch), because the model is
+# loaded per-process after fork. Budget ~0.4 GB per worker on top of the base
+# image. On a 512 MB instance keep WEB_CONCURRENCY=1; raise it only after
+# increasing the instance's RAM/CPU. The (2*CPU+1) rule of thumb does NOT apply
+# here because of that per-worker model footprint.
+#
+# NOTE: the in-memory rate limiters (app/middleware/rate_limit.py) are per
+# process, so with N workers the effective per-IP limit is N x the configured
+# value UNLESS Redis is configured — the LLM-route limiter is Redis-backed and
+# stays global across workers when REDIS_URL is set.
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2}"]

@@ -38,6 +38,9 @@ from app.services.prompt_persistence_service import PromptPersistenceService
 from app.services.tool_recommendation_service import ToolRecommendationService
 from app.services.prompt_classification_service import PromptClassificationService
 
+from app.core.config import settings
+from app.middleware.rate_limit import llm_rate_limiter
+
 logger = logging.getLogger("promptiq.api.enhancement")
 router = APIRouter(tags=["Enhancement & Analysis"])
 
@@ -61,7 +64,7 @@ def _sse(event: str, data: dict[str, Any]) -> str:
 class EnhancePromptRequest(BaseModel):
     role: Optional[str] = Field(default=None, description="Target role category for template selection", examples=["Marketer"])
     mode: Optional[str] = Field(default=None, description="Target work or study mode", examples=["Market Research"])
-    prompt: str = Field(..., description="Raw prompt content to enhance", examples=["Find the ideal customer for my SaaS."])
+    prompt: str = Field(..., max_length=settings.max_prompt_chars, description="Raw prompt content to enhance", examples=["Find the ideal customer for my SaaS."])
     variables: Optional[dict[str, str]] = Field(default=None, description="Template placeholder replacements", examples=[{"BUSINESS_CONTEXT": "remote SaaS", "LANGUAGE": "English"}])
     apply_style: bool = Field(default=False, description="Apply style profile")
     style_profile_id: Optional[UUID] = Field(default=None, description="Style profile UUID")
@@ -77,12 +80,12 @@ class EnhancePromptRequest(BaseModel):
 
 
 class AnalyzePromptRequest(BaseModel):
-    prompt: str = Field(..., description="Prompt content to analyze", examples=["Find my ideal customer."])
+    prompt: str = Field(..., max_length=settings.max_prompt_chars, description="Prompt content to analyze", examples=["Find my ideal customer."])
 
 
 class ComparePromptsRequest(BaseModel):
-    original_prompt: str = Field(..., description="Original raw prompt content")
-    enhanced_prompt: str = Field(..., description="Enhanced optimized prompt content")
+    original_prompt: str = Field(..., max_length=settings.max_prompt_chars, description="Original raw prompt content")
+    enhanced_prompt: str = Field(..., max_length=settings.max_prompt_chars, description="Enhanced optimized prompt content")
 
 
 # Response Models
@@ -230,6 +233,7 @@ async def _process_background_analysis(
 @router.post(
     "/enhance",
     response_model=EnhancePromptResponse,
+    dependencies=[Depends(llm_rate_limiter)],
     summary="Enhance Prompt End-to-End",
     description="Orchestrates template search, quality analysis, prompt enhancement, differential comparison, and saves the prompt with its version history.",
 )
@@ -363,6 +367,7 @@ async def enhance_prompt(
 
 @router.post(
     "/enhance/stream",
+    dependencies=[Depends(llm_rate_limiter)],
     summary="Enhance Prompt (Streaming, SSE)",
     description=(
         "Streaming counterpart of POST /enhance. Emits Server-Sent Events so the "
@@ -548,6 +553,7 @@ async def enhance_prompt_stream(
 @router.post(
     "/analyze",
     response_model=dict[str, Any],
+    dependencies=[Depends(llm_rate_limiter)],
     summary="Analyze Prompt Quality",
     description="Evaluates a prompt against 8 dimensions of prompt engineering, scoring quality metrics and generating grade and suggestion reports.",
 )
@@ -564,6 +570,7 @@ async def analyze_prompt(
 @router.post(
     "/compare",
     response_model=dict[str, Any],
+    dependencies=[Depends(llm_rate_limiter)],
     summary="Compare Original and Enhanced Prompts",
     description="Generates differential metrics, fixed gaps, readability scores, and estimated quality score delta between two prompts.",
 )
@@ -578,7 +585,7 @@ async def compare_prompts(
 
 
 class RecommendToolsRequest(BaseModel):
-    prompt: str = Field(..., description="Prompt text to analyze for tool recommendation")
+    prompt: str = Field(..., max_length=settings.max_prompt_chars, description="Prompt text to analyze for tool recommendation")
     mode: Optional[str] = Field(default=None, description="Task mode")
     role: Optional[str] = Field(default=None, description="User role")
 
@@ -586,6 +593,7 @@ class RecommendToolsRequest(BaseModel):
 @router.post(
     "/tools/recommend",
     response_model=ToolRecommendationSummary,
+    dependencies=[Depends(llm_rate_limiter)],
     summary="Get Recommended AI Tools",
     description="Recommends the top 3 AI tools for a given prompt, mode, and role.",
 )

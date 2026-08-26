@@ -20,6 +20,9 @@ from collections import defaultdict
 from fastapi import HTTPException, Request, status
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.core import redis_client
+from app.core.config import settings
+
 
 class RateLimitMiddleware:
     """Simple sliding-window rate limiter (pure ASGI), keyed by client IP."""
@@ -107,3 +110,50 @@ class RateLimiter:
 
 # Shared strict limiter for sensitive auth / OTP endpoints (5 requests / minute per IP).
 sensitive_rate_limiter = RateLimiter(max_requests=5, window_seconds=60)
+
+
+class RedisBackedRateLimiter:
+    """Per-IP limiter for expensive endpoints, coordinated across workers.
+
+    Uses a Redis fixed-window counter (shared by every worker and container)
+    when Redis is available, so the limit holds globally rather than per
+    process. When Redis is down or disabled, it falls back to an in-process
+    ``RateLimiter`` — still protective, just not coordinated across workers.
+    It never fails open: a Redis error degrades to the local limiter rather
+    than skipping the check.
+
+    Use as a route dependency:
+
+        dependencies=[Depends(llm_rate_limiter)]
+    """
+
+    def __init__(self, max_requests: int, window_seconds: int, scope: str = "llm"):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.scope = scope
+        # Per-process fallback used when Redis is unavailable.
+        self._local = RateLimiter(max_requests, window_seconds)
+
+    async def __call__(self, request: Request) -> None:
+        client = request.client
+        client_ip = client.host if client else "unknown"
+        key = redis_client.make_key("rl", self.scope, request.url.path, client_ip)
+        count = await redis_client.incr_fixed_window(key, self.window_seconds)
+        if count is None:
+            # Redis unavailable — enforce with the per-process limiter instead.
+            await self._local(request)
+            return
+        if count > self.max_requests:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many requests. Please slow down and try again shortly.",
+            )
+
+
+# Strict limiter for the expensive LLM routes (enhance / analyze / compare /
+# tool-recommend). Redis-backed so the cap holds across all workers; falls back
+# to a per-process counter when Redis is absent.
+llm_rate_limiter = RedisBackedRateLimiter(
+    max_requests=settings.llm_rate_limit_max_requests,
+    window_seconds=settings.llm_rate_limit_window_seconds,
+)
