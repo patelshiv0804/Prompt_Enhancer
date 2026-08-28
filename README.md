@@ -74,6 +74,22 @@ Dependencies and why they are required:
 
 ---
 
+## Load Testing
+
+The repository includes a k6 smoke/load profile that runs through Docker Compose.
+By default it exercises liveness and authenticated profile traffic only, so it
+does not spend LLM tokens during routine checks. Set `LOAD_INCLUDE_LLM=true` in
+`.env.loadtest` only when you intentionally want to include `/api/v1/analyze`.
+
+```bash
+docker compose --env-file .env.loadtest -f docker-compose.yml -f docker-compose.load.yml up --abort-on-container-exit k6
+```
+
+Tune the run with `LOAD_VUS`, `LOAD_DURATION`, `LOAD_EMAIL`, and
+`LOAD_PASSWORD` in `.env.loadtest`.
+
+---
+
 ## Project Initialization Commands
 
 1. Create project directories (if not already present):
