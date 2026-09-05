@@ -102,6 +102,15 @@ async def test_template_repository_filters_and_only_active_models(
 async def test_template_vector_search_returns_similarity_order(
     db_session: AsyncSession,
 ) -> None:
+    """The exact-match template ranks first and scores descend monotonically.
+
+    House rule 1 applies with force here: the clone holds 170 approved templates
+    with real 384-dimension embeddings, so this test cannot claim a *place* in
+    the ranking for its own second row — the ``far`` template loses to real dev
+    data. What is asserted instead is the invariant the repository owes: the
+    row whose body the query vector was derived from comes first, and every
+    subsequent score is no higher than the one before it.
+    """
     repo = TemplateRepository()
     near = await factories.create_template(
         db_session,
@@ -109,24 +118,21 @@ async def test_template_vector_search_returns_similarity_order(
         role="developer",
         mode="technical",
     )
-    far = await factories.create_template(
-        db_session,
-        body="watercolor wedding invitation wording",
-        role="writer",
-        mode="creative",
-    )
+    near_id = near.id
     await db_session.commit()
 
     results = await repo.search_templates_with_vector(
         db_session,
         hashed_embedding("postgres indexing query tuning"),
         is_approved=True,
-        limit=2,
+        limit=10,
     )
 
-    assert results[0][0].id == near.id
-    assert results[0][1] > results[-1][1]
-    assert far.id in [template.id for template, _score in results]
+    assert len(results) >= 2
+    assert results[0][0].id == near_id
+    scores = [score for _template, score in results]
+    assert scores == sorted(scores, reverse=True)
+    assert scores[0] > scores[-1]
 
 
 async def test_prompt_repository_filters_soft_delete_and_counts_user_rows(

@@ -1,0 +1,81 @@
+# docker-compose.e2e.yml — the backend the Playwright `live` project drives.
+#
+# Always an overlay, never standalone:
+#
+#   1. bash scripts/bootstrap_test_db.sh            # build prompt_enhancer_test
+#   2. docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d web
+#   3. cd ../Prompt_Enhancer-FE && npm run test:e2e:live
+#
+# STEP 2 IS NOT OPTIONAL, for the same reason it is not optional in
+# docker-compose.loadtest.yml: `web` may already be up on the *development*
+# database, and only `up -d web` notices the changed environment and recreates
+# the container. Unlike the k6 tier the live E2E suite WRITES — every enhance
+# persists a prompt and a version — so pointing it at the development database
+# would violate the read-only rule that covers the whole test suite. Restore the
+# dev stack when you are done:
+#
+#   docker compose -f docker-compose.yml up -d web
+#
+# Why a separate file rather than reusing docker-compose.loadtest.yml: that
+# overlay raises the LLM rate limit to 100000 to take the limiter out of a
+# latency measurement. Here the limiter is part of what we want to observe, so
+# only the coarse per-IP limiter is relaxed and the LLM limiter keeps its
+# production default. See the environment block.
+#
+# The LLM is the real Mistral provider. That is deliberate: the suite makes ONE
+# enhance call, which costs a fraction of a cent, and a stub would require
+# changing app/api/v1/deps.py. Everything else here — auth, cookies, CORS,
+# pagination envelopes — is provider-independent.
+#
+# That one call is also the only part of the suite that can be defeated by an
+# unpaid account, so it does not simply fail: e2e/live/optimizer.spec.ts first
+# reads GET /api/v1/health (the backend's own 1-token provider probe) and skips
+# with an explanation when `llm_provider` comes back "unhealthy". A spent Mistral
+# allowance answers 429 with `x-ratelimit-limit-req-minute: 0` for every request,
+# and the app's sanitised errors deliberately do not leak that — so without the
+# health probe a dead provider looks exactly like a broken persistence layer.
+
+services:
+  web:
+    # No --reload: the watcher polls a bind-mounted repo across the Windows
+    # filesystem boundary, which adds latency to every request the browser
+    # makes. Code edits need a container restart under this profile.
+    #
+    # One worker, explicitly. Both the in-process rate limiters and the
+    # connection pool are per worker, so a single worker is the only
+    # configuration in which "5 logins per 60s" is a number rather than a
+    # range — and auth.setup.ts depends on that budget being predictable.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+    environment:
+      # The line that makes this safe to run. scripts/bootstrap_test_db.sh
+      # builds this database as a clone of dev's table data; the live suite
+      # writes into the clone and never touches the original.
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}_test
+      # A single page load fans out into several API calls, and Playwright's
+      # retry plus a browser reload can multiply that fast. All of it arrives
+      # from one source IP, and RateLimitMiddleware is keyed per IP, so the
+      # 300/60s default is reachable by the harness itself rather than by
+      # anything the suite is trying to test. RATE_LIMIT_ENABLED stays on so
+      # the middleware is still in the request path.
+      - RATE_LIMIT_MAX_REQUESTS=100000
+      # LLM_RATE_LIMIT_MAX_REQUESTS is deliberately NOT set: the suite makes one
+      # enhance call, the default is 20/60s, and leaving it alone means the
+      # optimizer spec runs against the same limiter configuration as production.
+      #
+      # POST /auth/login is unaffected by either setting. sensitive_rate_limiter
+      # is built with 5/60s hardcoded at app/middleware/rate_limit.py:112 and
+      # attached unconditionally at app/api/v1/auth.py:74, so no environment
+      # variable can raise it. That is why the suite logs in once, in
+      # e2e/live/auth.setup.ts, and reuses the session via storageState.
+    healthcheck:
+      # The image's baked-in HEALTHCHECK calls /api/v1/health/, which reaches the
+      # Mistral API over the network. /health/liveness returns a literal dict —
+      # no database, no provider — so it is the right probe for "can Playwright
+      # start yet".
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/v1/health/liveness"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      # First boot loads the sentence-transformers model; failures inside this
+      # window do not count as retries.
+      start_period: 40s

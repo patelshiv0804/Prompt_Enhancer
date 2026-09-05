@@ -22,7 +22,7 @@ pytestmark = pytest.mark.integration
 async def test_health_reports_all_subsystems_healthy_by_default(
     client: AsyncClient,
 ) -> None:
-    response = await client.get("/api/health")
+    response = await client.get("/api/v1/health")
 
     assert response.status_code == 200, response.text
     assert response.json() == {
@@ -36,7 +36,7 @@ async def test_health_reports_all_subsystems_healthy_by_default(
 async def test_liveness_is_a_plain_200_probe(
     client: AsyncClient,
 ) -> None:
-    response = await client.get("/api/health/liveness")
+    response = await client.get("/api/v1/health/liveness")
 
     assert response.status_code == 200
     assert response.json() == {"status": "healthy"}
@@ -45,7 +45,7 @@ async def test_liveness_is_a_plain_200_probe(
 async def test_readiness_is_healthy_when_every_dependency_check_passes(
     client: AsyncClient,
 ) -> None:
-    response = await client.get("/api/health/readiness")
+    response = await client.get("/api/v1/health/readiness")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -59,7 +59,7 @@ async def test_readiness_is_healthy_when_every_dependency_check_passes(
 async def test_startup_is_not_ready_under_the_stubbed_embedding_model(
     client: AsyncClient,
 ) -> None:
-    response = await client.get("/api/health/startup")
+    response = await client.get("/api/v1/health/startup")
 
     assert response.status_code == 503
     assert response.json() == {
@@ -78,7 +78,7 @@ async def test_health_degrades_when_the_database_check_fails(
 
     monkeypatch.setattr("app.api.v1.health.verify_database_startup", boom)
 
-    response = await client.get("/api/health")
+    response = await client.get("/api/v1/health")
 
     assert response.status_code == 200
     assert response.json()["status"] == "degraded"
@@ -95,7 +95,7 @@ async def test_readiness_returns_503_when_the_llm_health_check_is_unhealthy(
 
     monkeypatch.setattr(stub_llm, "health_check", unhealthy)
 
-    response = await client.get("/api/health/readiness")
+    response = await client.get("/api/v1/health/readiness")
 
     assert response.status_code == 503
     assert response.json() == {
@@ -116,7 +116,7 @@ async def test_health_marks_the_embedding_layer_failed_when_generation_raises(
 
     monkeypatch.setattr(stub_embedding, "generate_for_prompt_async", fail)
 
-    response = await client.get("/api/health")
+    response = await client.get("/api/v1/health")
 
     assert response.status_code == 200
     assert response.json()["status"] == "degraded"

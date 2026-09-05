@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import AsyncClient
@@ -351,8 +351,17 @@ async def test_duplicate_detection_negative_threshold_treats_any_nearest_match_a
     db_session: AsyncSession,
     account: factories.Account,
 ) -> None:
-    """KNOWN DEFECT — threshold is unvalidated, so negative means "always yes"."""
-    prompt = await factories.create_prompt(
+    """KNOWN DEFECT — threshold is unvalidated, so negative means "always yes".
+
+    Any negative threshold is below every possible cosine distance, so the
+    nearest row in the corpus is always reported as a duplicate regardless of
+    how unrelated it is. House rule 1 forbids asserting *which* row comes back:
+    the scan is unscoped (defect #26) and the clone holds other prompts, so the
+    winner may be cloned dev data rather than this test's own prompt. What is
+    pinned is the invariant the defect produces — a duplicate is always claimed,
+    and a concrete prompt is always attached.
+    """
+    await factories.create_prompt(
         db_session,
         account=account,
         original_prompt="not really the same",
@@ -367,7 +376,8 @@ async def test_duplicate_detection_negative_threshold_treats_any_nearest_match_a
     ).json()
 
     assert body["is_duplicate"] is True
-    assert body["duplicate_prompt"]["id"] == str(prompt.id)
+    assert body["duplicate_prompt"] is not None
+    assert UUID(body["duplicate_prompt"]["id"])
 
 
 @pytest.mark.parametrize(

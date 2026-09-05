@@ -222,12 +222,47 @@ async def test_settings_routes_require_authentication(
         assert response.status_code == 401, (method, url, response.text)
 
 
-async def test_boolean_endpoint_rejects_non_boolean_payloads(
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("yes", True),
+        ("no", False),
+        ("true", True),
+        ("off", False),
+        ("1", True),
+        (0, False),
+    ],
+)
+async def test_boolean_endpoints_coerce_pydantic_recognised_truthy_strings(
     authed_client: AsyncClient,
+    value: object,
+    expected: bool,
 ) -> None:
+    """``enabled: bool`` runs in pydantic's lax mode, so strings are coerced.
+
+    Worth pinning rather than assuming: a client sending ``"no"`` gets 200 and
+    intent detection switched *off*, not a 422. That is standard pydantic v2
+    behaviour for ``bool`` outside strict mode, but it is also observable API
+    behaviour that a stricter schema would change.
+    """
     response = await authed_client.patch(
         f"{SETTINGS}/intent-detection",
-        json={"enabled": "yes"},
+        json={"enabled": value},
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 200, response.text
+    assert response.json()["auto_detect_intent"] is expected
+
+
+@pytest.mark.parametrize("value", ["banana", 5, 1.5, [], {}, None])
+async def test_boolean_endpoints_reject_values_pydantic_cannot_coerce(
+    authed_client: AsyncClient,
+    value: object,
+) -> None:
+    """Anything outside pydantic's recognised bool vocabulary is a 422."""
+    response = await authed_client.patch(
+        f"{SETTINGS}/intent-detection",
+        json={"enabled": value},
+    )
+
+    assert response.status_code == 422, (value, response.text)

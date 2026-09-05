@@ -5,13 +5,26 @@ history for one prompt, read one version by id, and restore a historical
 version as the active one. Like ``/prompts``, ownership is deliberately hidden:
 another user's prompt or version comes back as a 404 rather than a 403.
 
-Two quirks matter enough to pin explicitly.
+**TWO OF THE FOUR ROUTES ON THIS ROUTER ARE DEAD.** Both call a method that does
+not exist on ``PromptVersionService`` (whose real API is ``create_version``,
+``list_versions``, ``restore_version``, ``delete_version``):
 
-**The create schema asks for ``version_number``, but the route ignores it.**
-``PromptVersionService.create_version`` always computes the next sequential
-number from the database, so a caller can send ``999`` and still get version 2.
-That mismatch is worth testing because it is observable client behaviour, not a
-purely internal detail.
+* ``POST /prompt-versions/`` calls ``create_version_for_prompt(...)``
+* ``GET /prompt-versions/{version_id}`` calls ``get_version(...)``
+
+Every request to either raises ``AttributeError`` inside the handler's
+``try``, and the blanket ``except Exception: raise map_service_error(exc)``
+turns that into ``400 {"detail": "An error occurred while processing your
+request. Please try again."}`` — indistinguishable from a validation error. The
+tests below pin that as ``KNOWN DEFECT`` rather than asserting the intended
+behaviour, so the suite records the real contract and will fail loudly the day
+the application is fixed.
+
+One consequence worth stating: because create is dead, the ``version_number``
+field on ``PromptVersionCreate`` cannot be exercised through the API at all.
+``PromptVersionService.create_version`` computes the next sequential number
+itself and ignores whatever the client sends, but no caller can reach that code
+path today, so the mismatch is pinned as a unit-level fact only.
 
 **The restore route's documented errors do not match what the code emits.**
 The helper it uses raises ``ActiveVersionDeletionError`` and
@@ -59,120 +72,96 @@ def payload(content: str = "A refined version of the prompt.", **overrides: Any)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def test_creating_a_version_returns_it_in_the_envelope(
+async def test_creating_a_version_is_a_generic_400_because_the_handler_is_dead(
     authed_client: AsyncClient,
     db_session: AsyncSession,
     account: factories.Account,
 ) -> None:
+    """KNOWN DEFECT — ``POST /prompt-versions/`` cannot succeed for any input.
+
+    The handler calls ``prompt_version_service.create_version_for_prompt(...)``,
+    which does not exist on ``PromptVersionService``. The resulting
+    ``AttributeError`` is caught by the handler's blanket ``except Exception``
+    and mapped to the generic 400, so a completely broken endpoint is
+    indistinguishable from a rejected payload.
+    """
     prompt = await factories.create_prompt(db_session, account=account)
     prompt_id = str(prompt.id)
     await db_session.commit()
 
     response = await authed_client.post(VERSIONS, params={"prompt_id": prompt_id}, json=payload())
 
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["success"] is True
-    assert body["message"] == "Prompt version created."
-    assert body["data"]["prompt_id"] == prompt_id
-    assert body["data"]["content"] == "A refined version of the prompt."
-    assert body["data"]["version_type"] == "enhanced"
-    assert UUID(body["data"]["id"])
+    assert response.status_code == 400, response.text
+    assert response.json() == {"detail": GENERIC_400}
 
 
-async def test_create_returns_200_not_201(
+@pytest.mark.parametrize("version_type", ["draft", "published", "archived", "restored", None])
+async def test_create_fails_the_same_way_for_every_version_type(
     authed_client: AsyncClient,
     db_session: AsyncSession,
     account: factories.Account,
+    version_type: str | None,
 ) -> None:
+    """KNOWN DEFECT — the failure is unconditional, not payload-dependent.
+
+    Parametrised over every member of ``VersionType`` (plus the omitted case
+    that the handler would default to ``"draft"``) to establish that nothing
+    about the request content reaches a code path that works.
+    """
     prompt = await factories.create_prompt(db_session, account=account)
+    prompt_id = str(prompt.id)
     await db_session.commit()
 
-    response = await authed_client.post(VERSIONS, params={"prompt_id": str(prompt.id)}, json=payload())
+    body = payload()
+    if version_type is None:
+        body.pop("version_type")
+    else:
+        body["version_type"] = version_type
 
-    assert response.status_code == 200, response.text
+    response = await authed_client.post(VERSIONS, params={"prompt_id": prompt_id}, json=body)
+
+    assert response.status_code == 400, response.text
 
 
-async def test_creating_a_version_persists_it_and_makes_it_current(
+async def test_a_failed_create_persists_nothing(
     authed_client: AsyncClient,
     db_session: AsyncSession,
     account: factories.Account,
 ) -> None:
+    """KNOWN DEFECT — the dead handler at least leaves no partial row behind.
+
+    ``AttributeError`` is raised before any ``session.add``, and the session
+    dependency rolls back on the error path, so the prompt keeps whatever
+    ``current_version_id`` it had and no version row appears.
+    """
     prompt = await factories.create_prompt(db_session, account=account)
     prompt_id = prompt.id
     await db_session.commit()
 
-    response = await authed_client.post(VERSIONS, params={"prompt_id": str(prompt_id)}, json=payload())
+    await authed_client.post(VERSIONS, params={"prompt_id": str(prompt_id)}, json=payload())
 
-    version_id = UUID(response.json()["data"]["id"])
     db_session.expire_all()
-    stored = await db_session.scalar(select(PromptVersion).where(PromptVersion.id == version_id))
-    refreshed_prompt = await db_session.scalar(select(Prompt).where(Prompt.id == prompt_id))
+    versions = (
+        await db_session.scalars(select(PromptVersion).where(PromptVersion.prompt_id == prompt_id))
+    ).all()
+    current = await db_session.scalar(select(Prompt.current_version_id).where(Prompt.id == prompt_id))
 
-    assert stored is not None
-    assert stored.version_number == 1
-    assert refreshed_prompt is not None
-    assert refreshed_prompt.current_version_id == version_id
+    assert versions == []
+    assert current is None
 
 
-async def test_the_client_supplied_version_number_is_ignored_in_favour_of_the_next_sequence(
+async def test_the_ownership_check_runs_before_the_dead_service_call(
     authed_client: AsyncClient,
     db_session: AsyncSession,
     account: factories.Account,
 ) -> None:
-    prompt = await factories.create_prompt(db_session, account=account)
-    await factories.create_prompt_version(db_session, prompt=prompt, version_number=1)
-    prompt_id = str(prompt.id)
-    await db_session.commit()
+    """``_assert_prompt_owner`` precedes the broken call, so 404 still wins.
 
-    body = (
-        await authed_client.post(VERSIONS, params={"prompt_id": prompt_id}, json=payload(version_number=999))
-    ).json()
-
-    assert body["data"]["version_number"] == 2
-
-
-async def test_markdown_control_tokens_are_removed_from_the_saved_content(
-    authed_client: AsyncClient,
-    db_session: AsyncSession,
-    account: factories.Account,
-) -> None:
-    prompt = await factories.create_prompt(db_session, account=account)
-    prompt_id = str(prompt.id)
-    await db_session.commit()
-
-    noisy = "# Heading\n**Bold** and `code` with _italics_."
-    body = (
-        await authed_client.post(VERSIONS, params={"prompt_id": prompt_id}, json=payload(content=noisy))
-    ).json()
-
-    assert body["data"]["content"] == "Heading\nBold and code with italics."
-
-
-async def test_omitting_version_type_defaults_to_draft(
-    authed_client: AsyncClient,
-    db_session: AsyncSession,
-    account: factories.Account,
-) -> None:
-    prompt = await factories.create_prompt(db_session, account=account)
-    await db_session.commit()
-
-    body = (
-        await authed_client.post(
-            VERSIONS,
-            params={"prompt_id": str(prompt.id)},
-            json=payload(version_type=None),
-        )
-    ).json()
-
-    assert body["data"]["version_type"] == "draft"
-
-
-async def test_creating_a_version_for_an_unknown_or_unowned_prompt_is_a_404(
-    authed_client: AsyncClient,
-    db_session: AsyncSession,
-    account: factories.Account,
-) -> None:
+    This is the one create behaviour that is still meaningful: an unknown or
+    unowned ``prompt_id`` is rejected as 404 before the handler reaches the
+    method that does not exist, so the defect does not turn an authorization
+    failure into an ambiguous 400.
+    """
     stranger = await factories.create_account(db_session)
     theirs = await factories.create_prompt(db_session, account=stranger)
     theirs_id = str(theirs.id)
@@ -184,6 +173,59 @@ async def test_creating_a_version_for_an_unknown_or_unowned_prompt_is_a_404(
     assert unknown.status_code == 404
     assert unowned.status_code == 404
     assert unknown.json()["detail"] == NOT_FOUND_404
+    assert unowned.json()["detail"] == NOT_FOUND_404
+
+
+async def test_the_service_ignores_a_client_supplied_version_number(
+    db_session: AsyncSession,
+    account: factories.Account,
+) -> None:
+    """The ``version_number`` the create schema demands is computed, not honoured.
+
+    Asserted against the service directly because the route that would expose
+    it is dead (see the module docstring). ``PromptVersionCreate`` makes
+    ``version_number`` a required ``ge=1`` field, but ``create_version`` derives
+    the number from the highest existing version — so once the endpoint is
+    fixed, a caller sending ``999`` will still get ``2``.
+    """
+    from app.api.v1.prompt_versions import prompt_version_service
+
+    prompt = await factories.create_prompt(db_session, account=account)
+    await factories.create_prompt_version(db_session, prompt=prompt, version_number=1)
+    await db_session.flush()
+
+    created = await prompt_version_service.create_version(
+        session=db_session,
+        prompt=prompt,
+        content="A refined version of the prompt.",
+        version_type="draft",
+    )
+
+    assert created.version_number == 2
+    assert prompt.current_version_id == created.id
+
+
+async def test_the_service_strips_markdown_control_tokens_from_the_saved_content(
+    db_session: AsyncSession,
+    account: factories.Account,
+) -> None:
+    """``_clean_version_content`` removes markdown emphasis before persisting.
+
+    Also asserted against the service directly, for the same reason.
+    """
+    from app.api.v1.prompt_versions import prompt_version_service
+
+    prompt = await factories.create_prompt(db_session, account=account)
+    await db_session.flush()
+
+    created = await prompt_version_service.create_version(
+        session=db_session,
+        prompt=prompt,
+        content="# Heading\n**Bold** and `code` with _italics_.",
+        version_type="draft",
+    )
+
+    assert created.content == "Heading\nBold and code with italics."
 
 
 async def test_a_malformed_prompt_id_is_a_generic_400(
@@ -349,47 +391,58 @@ async def test_list_parameter_validation_and_errors(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-async def test_getting_a_version_returns_its_detail(
+async def test_getting_a_version_is_a_generic_400_because_the_handler_is_dead(
     authed_client: AsyncClient,
     db_session: AsyncSession,
     account: factories.Account,
 ) -> None:
+    """KNOWN DEFECT — ``GET /prompt-versions/{version_id}`` cannot succeed.
+
+    The handler calls ``prompt_version_service.get_version(session, version_id)``,
+    and ``PromptVersionService`` has no such method. As with create, the
+    ``AttributeError`` is swallowed into the generic 400 — so the caller's own,
+    perfectly valid version reads back as a bad request.
+    """
     prompt = await factories.create_prompt(db_session, account=account)
     version = await factories.create_prompt_version(
         db_session,
         prompt=prompt,
-        version_type=VersionType.ENHANCED.value,
+        version_type=VersionType.PUBLISHED.value,
         content="Detail body",
         change_summary="Why it changed",
     )
+    version_id = version.id
     await db_session.commit()
 
-    response = await authed_client.get(f"{VERSIONS}{version.id}")
+    response = await authed_client.get(f"{VERSIONS}{version_id}")
 
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["message"] == "Prompt version retrieved."
-    assert body["data"]["id"] == str(version.id)
-    assert body["data"]["prompt_id"] == str(prompt.id)
-    assert body["data"]["content"] == "Detail body"
-    assert body["data"]["change_summary"] == "Why it changed"
+    assert response.status_code == 400, response.text
+    assert response.json() == {"detail": GENERIC_400}
 
 
-async def test_getting_an_unowned_or_unknown_version_is_a_404(
+async def test_the_dead_detail_route_hides_the_404_it_documents(
     authed_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
+    """KNOWN DEFECT — unowned, unknown and owned ids are now indistinguishable.
+
+    Unlike create, the detail handler calls the missing method *before*
+    ``_assert_prompt_owner``, so the ownership check is unreachable. Every id
+    collapses to the same generic 400, which is at least not an information
+    leak — but the documented 404 can never be produced.
+    """
     stranger = await factories.create_account(db_session)
     prompt = await factories.create_prompt(db_session, account=stranger)
     version = await factories.create_prompt_version(db_session, prompt=prompt)
+    version_id = version.id
     await db_session.commit()
 
-    response = await authed_client.get(f"{VERSIONS}{version.id}")
+    unowned = await authed_client.get(f"{VERSIONS}{version_id}")
     unknown = await authed_client.get(f"{VERSIONS}{uuid4()}")
 
-    assert response.status_code == 404
-    assert unknown.status_code == 404
-    assert response.json()["detail"] == NOT_FOUND_404
+    assert unowned.status_code == 400
+    assert unknown.status_code == 400
+    assert unowned.json() == unknown.json() == {"detail": GENERIC_400}
 
 
 async def test_a_malformed_version_id_is_a_generic_400(
@@ -430,12 +483,16 @@ async def test_restoring_a_historical_version_switches_the_active_version_and_em
         content="Second active body",
         set_current=True,
     )
-    prompt_id = prompt.id
+    # House rule 4: capture the ids before the request. The restore commits and
+    # the session dependency's post-request handling expires every loaded
+    # instance, so ``first.id`` afterwards would be a lazy read from sync
+    # context — MissingGreenlet, not a value.
+    prompt_id, first_id, second_id = prompt.id, first.id, second.id
     await db_session.commit()
 
     response = await authed_client.post(
         f"{VERSIONS}{prompt_id}/restore",
-        json={"version_id": str(first.id)},
+        json={"version_id": str(first_id)},
     )
 
     assert response.status_code == 200, response.text
@@ -443,11 +500,11 @@ async def test_restoring_a_historical_version_switches_the_active_version_and_em
     db_session.expire_all()
     refreshed = await db_session.scalar(select(Prompt).where(Prompt.id == prompt_id))
     assert refreshed is not None
-    assert refreshed.current_version_id == first.id
+    assert refreshed.current_version_id == first_id
 
     expected_source = "Original restore text First restored body writer concise Restore Template"
     assert refreshed.embedding == pytest.approx(hashed_embedding(expected_source), abs=1e-6)
-    assert refreshed.current_version_id != second.id
+    assert refreshed.current_version_id != second_id
 
 
 async def test_restoring_the_active_version_is_a_generic_400_not_a_409(
@@ -495,19 +552,22 @@ async def test_restoring_for_an_unowned_or_unknown_prompt_is_a_404(
     stranger = await factories.create_account(db_session)
     prompt = await factories.create_prompt(db_session, account=stranger)
     version = await factories.create_prompt_version(db_session, prompt=prompt)
+    # House rule 4 — the first request fails and rolls back, expiring both rows.
+    prompt_id, version_id = prompt.id, version.id
     await db_session.commit()
 
     response = await authed_client.post(
-        f"{VERSIONS}{prompt.id}/restore",
-        json={"version_id": str(version.id)},
+        f"{VERSIONS}{prompt_id}/restore",
+        json={"version_id": str(version_id)},
     )
     unknown = await authed_client.post(
         f"{VERSIONS}{uuid4()}/restore",
-        json={"version_id": str(version.id)},
+        json={"version_id": str(version_id)},
     )
 
     assert response.status_code == 404
     assert unknown.status_code == 404
+    assert response.json()["detail"] == NOT_FOUND_404
 
 
 @pytest.mark.parametrize(
@@ -583,14 +643,21 @@ async def test_a_bearer_token_works_as_well_as_the_cookie(
     db_session: AsyncSession,
     account: factories.Account,
 ) -> None:
+    """Proved against the list route: the detail route is dead for every caller.
+
+    ``GET /prompt-versions/{version_id}`` would be the natural target here, but
+    it returns the generic 400 regardless of credentials, so it cannot
+    distinguish an accepted token from a rejected one.
+    """
     prompt = await factories.create_prompt(db_session, account=account)
     version = await factories.create_prompt_version(db_session, prompt=prompt)
+    prompt_id, version_id = str(prompt.id), str(version.id)
     await db_session.commit()
 
-    response = await client.get(f"{VERSIONS}{version.id}", headers=auth_headers)
+    response = await client.get(VERSIONS, params={"prompt_id": prompt_id}, headers=auth_headers)
 
-    assert response.status_code == 200
-    assert response.json()["data"]["id"] == str(version.id)
+    assert response.status_code == 200, response.text
+    assert [item["id"] for item in response.json()["data"]] == [version_id]
 
 
 async def test_an_expired_token_is_rejected(
