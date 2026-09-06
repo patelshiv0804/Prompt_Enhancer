@@ -4,13 +4,18 @@ from typing import Type
 
 from app.core.config import settings
 from app.services.llm.base import BaseLLMProvider
-from app.services.llm.mistral_provider import MistralProvider
-from app.services.llm.exceptions import LLMProviderError
+from app.services.llm.mistral_provider import OpenAICompatibleProvider
 
 
 class LLMFactory:
     _registry: dict[str, Type[BaseLLMProvider]] = {
-        "mistral": MistralProvider,
+        "groq": OpenAICompatibleProvider,
+        "mistral": OpenAICompatibleProvider,
+        "openai": OpenAICompatibleProvider,
+        "openrouter": OpenAICompatibleProvider,
+        "gemini": OpenAICompatibleProvider,
+        "cerebras": OpenAICompatibleProvider,
+        "local": OpenAICompatibleProvider,
     }
 
     @classmethod
@@ -19,8 +24,6 @@ class LLMFactory:
 
     @classmethod
     def get_provider(cls) -> BaseLLMProvider:
-        provider_name = getattr(settings, "llm_provider", "mistral").lower()
-        provider_cls = cls._registry.get(provider_name)
-        if provider_cls is None:
-            raise LLMProviderError(f"LLM provider '{provider_name}' is not registered.")
+        provider_name = getattr(settings, "llm_provider", "groq").lower()
+        provider_cls = cls._registry.get(provider_name, OpenAICompatibleProvider)
         return provider_cls()

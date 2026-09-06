@@ -61,12 +61,12 @@ class PromptComparisonService:
         try:
             res = await self.llm_provider.generate(
                 prompt=comparison_prompt,
-                max_tokens=settings.mistral_max_tokens,
+                max_tokens=settings.llm_max_tokens,
                 temperature=settings.prompt_analysis_temperature,
             )
         except LLMTimeoutError as exc:
             logger.exception("LLM timeout during prompt comparison")
-            raise PromptComparisonException("Mistral request timed out during prompt comparison.") from exc
+            raise PromptComparisonException("LLM request timed out during prompt comparison.") from exc
         except Exception as exc:
             logger.exception("LLM failure during prompt comparison")
             raise PromptComparisonException("LLM provider failed to generate prompt comparison.") from exc

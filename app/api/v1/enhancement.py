@@ -154,7 +154,7 @@ async def _process_background_analysis(
     logger.info("Starting background analysis for prompt_id=%s", prompt_id)
     try:
         from app.db.session import async_session
-        from app.services.llm.mistral_provider import MistralProvider
+        from app.services.llm.factory import LLMFactory
         from app.services.prompt_analysis_service import PromptAnalysisService
         from app.services.prompt_comparison_service import PromptComparisonService
         from app.services.tool_recommendation_service import ToolRecommendationService
@@ -162,7 +162,7 @@ async def _process_background_analysis(
         from app.repositories.prompt import PromptRepository
         from app.repositories.prompt_version import PromptVersionRepository
 
-        llm_provider = MistralProvider()
+        llm_provider = LLMFactory.get_provider()
         analysis_service = PromptAnalysisService(llm_provider=llm_provider)
         comparison_service = PromptComparisonService(llm_provider=llm_provider)
         embedding_service = EmbeddingService()

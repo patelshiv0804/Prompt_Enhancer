@@ -13,14 +13,14 @@ class HealthStatus(BaseModel):
     status: str = Field(..., description="Overall application status", examples=["ok"])
     database: str = Field(..., description="Database connection health status", examples=["connected"])
     embedding_model: str = Field(..., description="Sentence embedding engine status", examples=["active"])
-    llm_provider: str = Field(..., description="Mistral AI connection health status", examples=["healthy"])
+    llm_provider: str = Field(..., description="OpenAI-compatible LLM connection health status", examples=["healthy"])
 
 
 @router.get(
     "/health",
     response_model=HealthStatus,
     summary="System Health Check",
-    description="Validates PostgreSQL connections, SentenceTransformer loading, and Mistral completions API statuses.",
+    description="Validates PostgreSQL connections, SentenceTransformer loading, and OpenAI-compatible LLM API statuses.",
 )
 async def health_check(
     llm: MistralProvider = Depends(get_llm_provider),

@@ -38,7 +38,8 @@ from app.services.llm.mistral_provider import MistralProvider, close_shared_clie
 
 pytestmark = pytest.mark.unit
 
-ENDPOINT = "https://api.mistral.ai/v1/chat/completions"
+ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
+PROVIDER_NAME = "groq"
 
 # Captured before conftest's autouse patch can replace them. See module docstring.
 REAL_ANALYZE = MistralProvider.analyze_prompt
@@ -56,7 +57,7 @@ def completion(content: str, **extra: Any) -> dict[str, Any]:
 def bare_provider() -> MistralProvider:
     """A provider with the attributes ``__init__`` sets, but without running it.
 
-    ``__init__`` raises unless ``settings.mistral_api_key`` is populated, and the
+    ``__init__`` raises unless ``settings.llm_api_key`` is populated, and the
     conftest replaces it anyway; building the instance directly keeps these tests
     independent of both.
     """
@@ -66,6 +67,7 @@ def bare_provider() -> MistralProvider:
     provider.timeout = 5.0
     provider.temperature = 0.3
     provider.max_tokens = 128
+    provider.provider_name = PROVIDER_NAME
     provider.endpoint = ENDPOINT
     provider.headers = {
         "Authorization": "Bearer unit-test-key",
@@ -259,7 +261,7 @@ def test_parse_text_coerces_non_string_content(provider: MistralProvider) -> Non
 def test_parse_text_rejects_a_non_dict_body(provider: MistralProvider, data: Any) -> None:
     """The isinstance guard is what keeps ``"choices" in data`` from doing a
     substring or membership test on the wrong type."""
-    with pytest.raises(LLMProviderError, match="Unexpected Mistral response format"):
+    with pytest.raises(LLMProviderError, match="Unexpected LLM response format"):
         provider._parse_text(data)
 
 
@@ -287,7 +289,7 @@ def test_parse_text_rejects_a_non_dict_body(provider: MistralProvider, data: Any
 def test_parse_text_rejects_a_dict_it_cannot_read(
     provider: MistralProvider, data: dict
 ) -> None:
-    with pytest.raises(LLMProviderError, match="Unable to parse Mistral response"):
+    with pytest.raises(LLMProviderError, match="Unable to parse LLM response"):
         provider._parse_text(data)
 
 
@@ -426,7 +428,7 @@ async def test_post_maps_a_read_timeout(provider: MistralProvider, transport) ->
     specifically, so this mapping is what makes a slow Mistral retryable."""
     transport(error=httpx.ReadTimeout("too slow"))
 
-    with pytest.raises(LLMTimeoutError, match="Mistral request timed out"):
+    with pytest.raises(LLMTimeoutError, match="groq request timed out"):
         await provider._post({})
 
 
@@ -441,7 +443,7 @@ async def test_post_maps_every_http_error_status(
     """
     transport(result=response(status, json={"message": "nope"}))
 
-    with pytest.raises(LLMRequestError, match="Mistral request failed"):
+    with pytest.raises(LLMRequestError, match="groq request failed"):
         await provider._post({})
 
 
@@ -466,7 +468,7 @@ async def test_post_maps_everything_else_to_a_provider_error(
     """
     transport(error=error)
 
-    with pytest.raises(LLMProviderError, match="Unexpected Mistral provider error"):
+    with pytest.raises(LLMProviderError, match="Unexpected groq provider error"):
         await provider._post({})
 
 
@@ -475,7 +477,7 @@ async def test_post_maps_an_undecodable_body_to_a_provider_error(
 ) -> None:
     transport(result=response(200, text="<html>gateway error</html>"))
 
-    with pytest.raises(LLMProviderError, match="Unexpected Mistral provider error"):
+    with pytest.raises(LLMProviderError, match="Unexpected groq provider error"):
         await provider._post({})
 
 
@@ -497,7 +499,7 @@ async def test_optimize_prompt_returns_stripped_text_and_metadata(
     assert result.template_id == "template-123"
     assert result.score is None
     assert result.metadata == {
-        "provider": "mistral",
+        "provider": PROVIDER_NAME,
         "finish_reason": "stop",
         "usage": {"prompt_tokens": 11, "completion_tokens": 22},
         "max_tokens": 4096,
@@ -540,7 +542,7 @@ async def test_generate_returns_stripped_text(
     result = await REAL_GENERATE(provider, "a prompt")
 
     assert result.text == "generated"
-    assert result.metadata == {"provider": "mistral"}
+    assert result.metadata == {"provider": PROVIDER_NAME}
 
 
 async def test_generate_defaults_to_256_tokens(
@@ -731,7 +733,7 @@ async def test_stream_maps_an_http_error_status(
     reaches the log — httpx will not read a streamed body on its own."""
     client = transport(stream_status=429, stream_lines=[delta("never reached")])
 
-    with pytest.raises(LLMRequestError, match="Mistral streaming request failed"):
+    with pytest.raises(LLMRequestError, match="groq streaming request failed"):
         await collect(REAL_STREAM(provider, "p"))
 
     assert client.last_stream_response.read_before_raise is True
@@ -740,7 +742,7 @@ async def test_stream_maps_an_http_error_status(
 async def test_stream_maps_a_read_timeout(provider: MistralProvider, transport) -> None:
     transport(stream_error=httpx.ReadTimeout("stalled mid-stream"))
 
-    with pytest.raises(LLMTimeoutError, match="Mistral streaming request timed out"):
+    with pytest.raises(LLMTimeoutError, match="groq streaming request timed out"):
         await collect(REAL_STREAM(provider, "p"))
 
 
@@ -761,7 +763,7 @@ async def test_stream_maps_anything_else_to_a_provider_error(
 ) -> None:
     transport(stream_error=httpx.ConnectError("no route"))
 
-    with pytest.raises(LLMProviderError, match="Unexpected Mistral provider streaming"):
+    with pytest.raises(LLMProviderError, match="Unexpected groq provider streaming"):
         await collect(REAL_STREAM(provider, "p"))
 
 
@@ -797,8 +799,8 @@ async def test_the_shared_client_is_created_once_and_reused(
     second = await mistral_module.get_shared_client()
 
     assert first is second
-    assert first.timeout.read == settings.mistral_timeout
-    assert first.timeout.connect == settings.mistral_connect_timeout
+    assert first.timeout.read == settings.llm_timeout
+    assert first.timeout.connect == settings.llm_connect_timeout
 
 
 async def test_closing_the_shared_client_clears_the_global(

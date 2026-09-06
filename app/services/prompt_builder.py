@@ -46,7 +46,7 @@ class PromptBuilder:
         style_attributes: Optional[dict] = None,
         enhancement_level: str = "standard",
     ) -> str:
-        logger.info("Building final prompt for Mistral AI (level=%s)", enhancement_level)
+        logger.info("Building final prompt for the configured LLM (level=%s)", enhancement_level)
         sys_inst = system_instructions or self.DEFAULT_SYSTEM_INSTRUCTIONS
 
         # Assemble prompt components deterministically

@@ -19,7 +19,7 @@ logger = logging.getLogger("promptiq.prompt_analysis")
 
 class PromptAnalysisService:
     """
-    PromptAnalysisService uses Mistral AI to perform a detailed quality analysis
+    PromptAnalysisService uses the configured LLM provider to perform a detailed quality analysis
     across 6 key prompt engineering dimensions and returns structured scores,
     grades, and improvement suggestions.
     """
@@ -86,12 +86,12 @@ class PromptAnalysisService:
         try:
             res = await self.llm_provider.generate(
                 prompt=analysis_prompt,
-                max_tokens=settings.mistral_max_tokens,
+                max_tokens=settings.llm_max_tokens,
                 temperature=settings.prompt_analysis_temperature,
             )
         except LLMTimeoutError as exc:
             logger.exception("LLM timeout during prompt analysis")
-            raise AnalysisTimeoutException("Mistral request timed out during prompt analysis.") from exc
+            raise AnalysisTimeoutException("LLM request timed out during prompt analysis.") from exc
         except Exception as exc:
             logger.exception("LLM failure during prompt analysis")
             raise PromptAnalysisException("LLM provider failed to generate prompt analysis.") from exc
