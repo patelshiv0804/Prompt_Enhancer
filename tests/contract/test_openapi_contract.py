@@ -23,11 +23,6 @@ with a no-op. What remains under test is exactly what a contract tier is for:
 that Schemathesis can read ``/openapi.json``, generate cases from it, call the
 ASGI application, and find the responses conformant in status, content type and
 schema.
-
-``/api/v1/health/startup`` is excluded on purpose — it reaches for
-``EmbeddingService.model``, which the autouse guard in ``tests/conftest.py``
-refuses in order to prevent an accidental 90 MB model download. Its behaviour is
-covered in ``tests/integration/test_health.py`` instead.
 """
 
 from __future__ import annotations
@@ -47,11 +42,10 @@ from tests.stubs.llm import StubLLMProvider
 
 pytestmark = [pytest.mark.contract, pytest.mark.integration]
 
-# The three operations that need neither authentication nor a seeded resource id.
+# The two operations that need neither authentication nor a seeded resource id.
 FUZZED_PATHS = [
     "/api/v1/health",
     "/api/v1/health/liveness",
-    "/api/v1/health/readiness",
 ]
 
 
@@ -90,8 +84,8 @@ def api_schema(contract_app: FastAPI):
 # The filter goes on the *lazy* schema, not on the schema the fixture returns.
 # ``schemathesis.pytest.from_fixture`` keeps its own ``filter_set``, and
 # ``parametrize()`` expands operations against that one — a filter applied only to
-# the fixture's schema object is silently ignored, and all 86 operations get
-# generated instead of these three (most of them needing authentication and
+# the fixture's schema object is silently ignored, and every operation gets
+# generated instead of these two (most of them needing authentication and
 # seeded ids, so they fail as "server error" and drown the real signal).
 schema = schemathesis.pytest.from_fixture("api_schema").include(path=FUZZED_PATHS)
 

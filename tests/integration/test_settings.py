@@ -122,30 +122,6 @@ async def test_auto_detect_intent_string_is_silently_ignored(
     assert response.json()["auto_detect_intent"] == before
 
 
-async def test_reset_restores_factory_defaults(
-    authed_client: AsyncClient,
-) -> None:
-    await authed_client.patch(
-        SETTINGS,
-        json={
-            "theme": "dark",
-            "default_mode": "coding",
-            "default_model": "claude",
-            "show_diff_by_default": False,
-            "auto_detect_intent": False,
-        },
-    )
-
-    response = await authed_client.post(f"{SETTINGS}/reset")
-
-    assert response.status_code == 200
-    assert response.json()["theme"] == DEFAULT_SETTINGS["theme"]
-    assert response.json()["default_mode"] == DEFAULT_SETTINGS["default_mode"]
-    assert response.json()["default_model"] == DEFAULT_SETTINGS["default_model"]
-    assert response.json()["show_diff_by_default"] == DEFAULT_SETTINGS["show_diff_by_default"]
-    assert response.json()["auto_detect_intent"] == DEFAULT_SETTINGS["auto_detect_intent"]
-
-
 async def test_updating_theme_uses_the_specialized_endpoint(
     authed_client: AsyncClient,
 ) -> None:
@@ -209,7 +185,6 @@ async def test_settings_routes_require_authentication(
     endpoints = [
         ("get", SETTINGS, None),
         ("patch", SETTINGS, {}),
-        ("post", f"{SETTINGS}/reset", None),
         ("patch", f"{SETTINGS}/theme", {"theme": "dark"}),
         ("patch", f"{SETTINGS}/default-model", {"default_model": "claude"}),
         ("patch", f"{SETTINGS}/default-mode", {"default_mode": "coding"}),

@@ -1,20 +1,15 @@
 """Integration tests for the health endpoints.
 
 The harness makes these routes especially worth pinning because the embedding
-service is stubbed. ``/api/v1/health`` and ``/api/v1/health/readiness`` call
-``generate_for_prompt_async`` and therefore see the stub as healthy, while
-``/api/v1/health/startup`` touches ``emb.model`` and the stub deliberately
-raises there to prevent accidental model loads. So startup is degraded by
-default under test even when the app is otherwise fine.
+service is stubbed. ``/api/v1/health`` calls ``generate_for_prompt_async`` and
+therefore sees the stub as healthy, while ``/api/v1/health/liveness`` is a plain
+probe that never touches a dependency.
 """
 
 from __future__ import annotations
 
 import pytest
 from httpx import AsyncClient
-
-from app.services.llm.schemas import HealthCheckResult
-from tests.stubs.llm import StubLLMProvider
 
 pytestmark = pytest.mark.integration
 
@@ -42,33 +37,6 @@ async def test_liveness_is_a_plain_200_probe(
     assert response.json() == {"status": "healthy"}
 
 
-async def test_readiness_is_healthy_when_every_dependency_check_passes(
-    client: AsyncClient,
-) -> None:
-    response = await client.get("/api/v1/health/readiness")
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "status": "healthy",
-        "database": "connected",
-        "embedding_model": "active",
-        "llm_provider": "healthy",
-    }
-
-
-async def test_startup_is_not_ready_under_the_stubbed_embedding_model(
-    client: AsyncClient,
-) -> None:
-    response = await client.get("/api/v1/health/startup")
-
-    assert response.status_code == 503
-    assert response.json() == {
-        "status": "starting",
-        "database": "connected",
-        "embedding_model": "loading",
-    }
-
-
 async def test_health_degrades_when_the_database_check_fails(
     client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -83,27 +51,6 @@ async def test_health_degrades_when_the_database_check_fails(
     assert response.status_code == 200
     assert response.json()["status"] == "degraded"
     assert response.json()["database"] == "failed"
-
-
-async def test_readiness_returns_503_when_the_llm_health_check_is_unhealthy(
-    client: AsyncClient,
-    stub_llm: StubLLMProvider,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def unhealthy() -> HealthCheckResult:
-        return HealthCheckResult(healthy=False, details="stubbed failure")
-
-    monkeypatch.setattr(stub_llm, "health_check", unhealthy)
-
-    response = await client.get("/api/v1/health/readiness")
-
-    assert response.status_code == 503
-    assert response.json() == {
-        "status": "unhealthy",
-        "database": "connected",
-        "embedding_model": "active",
-        "llm_provider": "unhealthy",
-    }
 
 
 async def test_health_marks_the_embedding_layer_failed_when_generation_raises(

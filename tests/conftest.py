@@ -24,11 +24,10 @@ FOUR THINGS THIS FILE GUARANTEES
 3. **No network, no model weights.** ``get_llm_provider`` and
    ``get_embedding_service`` are replaced through ``dependency_overrides``, which
    reaches the whole graph because every service in ``app/api/v1/deps.py`` is
-   ``Depends``-injected. Nine places construct ``EmbeddingService()`` or
-   ``MistralProvider()`` directly and so bypass DI entirely (module-level
-   singletons in ``app/api/v1/prompt_versions.py``, the ``or EmbeddingService()``
-   constructor defaults in five services, and the background task at
-   [app/api/v1/enhancement.py:172]); those are covered by a second, narrower
+   ``Depends``-injected. A handful of places construct ``EmbeddingService()`` or
+   ``MistralProvider()`` directly and so bypass DI entirely (the ``or
+   EmbeddingService()`` constructor defaults in five services, and the background
+   task at [app/api/v1/enhancement.py:172]); those are covered by a second, narrower
    safety net that points the real classes' methods at the *same* stub objects.
    The net is a backstop, not the mechanism: it forwards to the stubs rather than
    reimplementing behaviour, so there is one definition of what the fake LLM does.
@@ -327,10 +326,10 @@ def guard_bypass_paths(
     """Cover the call sites that construct providers directly, bypassing DI.
 
     ``dependency_overrides`` only reaches things FastAPI resolves. It does not
-    reach the module-level singletons in ``app/api/v1/prompt_versions.py``, the
-    ``embedding_service or EmbeddingService()`` fallbacks in five services, or
-    the background task at [app/api/v1/enhancement.py:172] — each of which would
-    otherwise open a real HTTP connection or load 90 MB of model weights. Patching
+    reach the ``embedding_service or EmbeddingService()`` fallbacks in five
+    services, or the background task at [app/api/v1/enhancement.py:172] — each of
+    which would otherwise open a real HTTP connection or load 90 MB of model
+    weights. Patching
     the classes' *methods* (not their construction) catches all of them at once,
     whichever module namespace holds the imported name.
     """

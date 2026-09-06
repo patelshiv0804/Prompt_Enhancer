@@ -35,8 +35,6 @@ from tests.stubs.llm import (
     STUB_ANALYSIS_OVERALL_SCORE,
     STUB_CLASSIFICATION_LEVEL,
     STUB_CLASSIFICATION_REASON,
-    STUB_COMPARISON_GRADE_AFTER,
-    STUB_COMPARISON_GRADE_BEFORE,
     StubLLMProvider,
 )
 
@@ -45,7 +43,6 @@ pytestmark = pytest.mark.integration
 ENHANCE = "/api/v1/enhance"
 STREAM = "/api/v1/enhance/stream"
 ANALYZE = "/api/v1/analyze"
-COMPARE = "/api/v1/compare"
 TOOLS = "/api/v1/tools/recommend"
 
 GENERIC_400 = "An error occurred while processing your request. Please try again."
@@ -515,43 +512,6 @@ async def test_analyze_empty_prompt_is_a_500(
     client: AsyncClient,
 ) -> None:
     response = await client.post(ANALYZE, json={"prompt": ""})
-
-    assert response.status_code == 500
-    assert response.json()["detail"] == GENERIC_500
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# POST /compare
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-async def test_compare_returns_the_stubbed_comparison_payload(
-    client: AsyncClient,
-) -> None:
-    response = await client.post(
-        COMPARE,
-        json={
-            "original_prompt": "Write a launch note.",
-            "enhanced_prompt": "You are a launch strategist. Write a structured launch note.",
-        },
-    )
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["quality_delta"] == 4.0
-    assert body["summary"]["grade_improvement"] == (
-        f"{STUB_COMPARISON_GRADE_BEFORE} to {STUB_COMPARISON_GRADE_AFTER}"
-    )
-    assert body["improvements"] == ["Added an explicit role.", "Added output constraints."]
-
-
-async def test_compare_empty_fields_are_a_500(
-    client: AsyncClient,
-) -> None:
-    response = await client.post(
-        COMPARE,
-        json={"original_prompt": "", "enhanced_prompt": ""},
-    )
 
     assert response.status_code == 500
     assert response.json()["detail"] == GENERIC_500

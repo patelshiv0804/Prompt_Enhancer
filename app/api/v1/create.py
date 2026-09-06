@@ -18,14 +18,3 @@ async def create_style_profile(
     """Create a new style profile."""
     service = StyleProfileService(db, user_id)
     return await service.create_style(payload)
-
-# 19. SP08 - Duplicate Style
-@router.post("/{id}/duplicate", response_model=StyleProfileResponse)
-async def duplicate_style_profile(
-    id: uuid.UUID,
-    db: AsyncSession = Depends(get_session),
-    user_id: uuid.UUID = Depends(get_current_user_id),
-):
-    """Duplicate a style profile, deep copying parameters with a new Copy suffix name."""
-    service = StyleProfileService(db, user_id)
-    return await service.duplicate_style(id)

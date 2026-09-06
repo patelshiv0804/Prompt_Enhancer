@@ -1,4 +1,4 @@
-"""``/api/v1/prompts`` — the vault: list, detail, delete and "find similar".
+"""``/api/v1/prompts`` — the vault: list, detail and delete.
 
 Two properties of this router shape almost every test below.
 
@@ -7,12 +7,7 @@ route depends on ``get_current_user_id``, and ``_assert_owner`` deliberately
 raises ``PromptNotFoundError`` (→ 404) rather than a 403 for a prompt owned by
 someone else, so ids are not enumerable. ``list_prompts`` goes further and
 *overrides* any client-supplied user id with the caller's own, under a comment
-naming the hardening ticket (N4). But ``/similar/{id}`` — whose ownership check
-on the query prompt is right there in the handler — hands the caller every user's
-prompts as matches, because the search below it never learned about ``user_id``.
-Its sibling ``/search`` passes ``user_id=str(user_id)`` with an explicit "N4"
-comment, which is the evidence the omission is an oversight rather than a
-decision. That is asserted, as a leak, in ``test_similar_leaks_...``.
+naming the hardening ticket (N4).
 
 **Every handler ends in ``except Exception as exc: raise map_service_error(exc)``.**
 Nothing not isinstance-matched by that mapper survives: a pydantic
@@ -724,8 +719,7 @@ async def test_a_non_canonical_uuid_still_resolves(
     mangle: Any,
 ) -> None:
     """``UUID(str)`` accepts upper case and the dashless form, so these are the
-    same prompt. Harmless here — but ``/similar/{id}`` compares that raw string
-    to a canonical one, which is how the self-exclusion bug below happens."""
+    same prompt, and both resolve to the same detail record."""
     prompt = await factories.create_prompt(db_session, account=account)
     prompt_id = str(prompt.id)
     await db_session.commit()
@@ -929,260 +923,6 @@ async def test_a_delete_after_reading_the_detail_still_succeeds(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GET /api/v1/prompts/similar/{prompt_id}
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-async def test_similar_prompts_come_back_with_a_score(
-    authed_client: AsyncClient, db_session: AsyncSession, account: factories.Account
-) -> None:
-    """The stub embedding is a deterministic lexical hash, so two prompts with
-    identical text are exactly co-directional and score 1.0. That is what makes
-    an assertion on the *value* legitimate here — cross-corpus comparisons against
-    the cloned rows' real MiniLM vectors are noise and are never asserted on."""
-    query = await factories.create_prompt(
-        db_session, account=account, original_prompt="tune a postgres index"
-    )
-    twin = await factories.create_prompt(
-        db_session, account=account, original_prompt="tune a postgres index"
-    )
-    query_id, twin_id = str(query.id), str(twin.id)
-    await db_session.commit()
-
-    response = await authed_client.get(f"{PROMPTS}similar/{query_id}")
-
-    assert response.status_code == 200
-    body = response.json()
-    matches = {match["prompt_id"]: match for match in body["results"]}
-    assert twin_id in matches
-    assert matches[twin_id]["similarity_score"] == pytest.approx(1.0, abs=1e-6)
-    assert set(matches[twin_id]) >= {"prompt_id", "title", "similarity_score"}
-    assert body["message"] == f"Found {len(body['results'])} similar prompts."
-
-
-async def test_a_prompt_is_not_similar_to_itself(
-    authed_client: AsyncClient, db_session: AsyncSession, account: factories.Account
-) -> None:
-    prompt = await factories.create_prompt(db_session, account=account)
-    prompt_id = str(prompt.id)
-    await db_session.commit()
-
-    body = (await authed_client.get(f"{PROMPTS}similar/{prompt_id}")).json()
-
-    assert prompt_id not in [match["prompt_id"] for match in body["results"]]
-
-
-async def test_an_uppercase_id_makes_a_prompt_similar_to_itself(
-    authed_client: AsyncClient, db_session: AsyncSession, account: factories.Account
-) -> None:
-    """KNOWN DEFECT — the self-exclusion compares strings, not UUIDs.
-
-    The handler filters with ``r["prompt_id"] != prompt_id``, where the left side
-    is the service's canonical lower-case ``str(uuid)`` and the right side is
-    whatever the caller typed in the path. ``UUID()`` accepts upper case — the
-    detail route serves it happily — so an upper-case id defeats the filter: the
-    prompt is returned as its own nearest match at similarity 1.0, and
-    ``len(results)`` is one higher than the caller asked for because the ``+1``
-    fetched to make room for the exclusion is never consumed. Comparing
-    ``UUID(r["prompt_id"]) != UUID(prompt_id)`` fixes both.
-    """
-    prompt = await factories.create_prompt(db_session, account=account)
-    prompt_id = str(prompt.id)
-    await db_session.commit()
-
-    body = (await authed_client.get(f"{PROMPTS}similar/{prompt_id.upper()}")).json()
-
-    matches = {match["prompt_id"]: match for match in body["results"]}
-    assert prompt_id in matches
-    assert matches[prompt_id]["similarity_score"] == pytest.approx(1.0, abs=1e-6)
-
-
-async def test_similar_leaks_other_users_prompts(
-    authed_client: AsyncClient, db_session: AsyncSession, account: factories.Account
-) -> None:
-    """KNOWN DEFECT (SECURITY) — cross-user disclosure of prompt bodies.
-
-    ``_assert_owner`` guards the *query* prompt, and then
-    ``PromptSimilarityService.search_similar_prompts`` runs an unfiltered vector
-    search over the whole ``prompts`` table. The repository underneath it *has* a
-    ``user_id`` parameter; the service neither accepts nor passes one, and the
-    route supplies nothing. Each match carries ``title``, ``original_prompt``,
-    ``old_analysis``, ``new_analysis`` and ``grade``, so any authenticated user can
-    read every other user's prompt text — and, by varying the query text, walk the
-    whole corpus.
-
-    The sibling ``POST /prompts/search`` forces ``user_id=str(user_id)`` under a
-    comment naming the same hardening ticket the list route cites, which is the
-    evidence this is an oversight rather than a decision. ``/duplicates`` and
-    ``/recommendations`` share the flaw (pinned in ``test_search.py``).
-
-    Asserted as the leak it is: this test must fail the moment the scoping lands.
-    """
-    secret = "internal salary review memo for the board"
-    stranger = await factories.create_account(db_session)
-    theirs = await factories.create_prompt(
-        db_session, account=stranger, title="Their Private Prompt", original_prompt=secret
-    )
-    mine = await factories.create_prompt(db_session, account=account, original_prompt=secret)
-    mine_id, theirs_id = str(mine.id), str(theirs.id)
-    await db_session.commit()
-
-    body = (await authed_client.get(f"{PROMPTS}similar/{mine_id}")).json()
-
-    matches = {match["prompt_id"]: match for match in body["results"]}
-    assert theirs_id in matches
-    assert matches[theirs_id]["title"] == "Their Private Prompt"
-    assert matches[theirs_id]["original_prompt"] == secret
-
-
-async def test_the_active_version_content_is_what_gets_searched(
-    authed_client: AsyncClient, db_session: AsyncSession, account: factories.Account
-) -> None:
-    """``query_text`` prefers ``current_version.content`` over ``original_prompt``,
-    so an enhanced prompt finds neighbours of its *enhanced* text."""
-    enhanced = "orchestrate a kubernetes rollout with zero downtime"
-    query = await factories.create_prompt(
-        db_session, account=account, original_prompt="unrelated original text"
-    )
-    await factories.create_prompt_version(db_session, prompt=query, content=enhanced)
-    twin = await factories.create_prompt(
-        db_session, account=account, original_prompt=enhanced
-    )
-    query_id, twin_id = str(query.id), str(twin.id)
-    await db_session.commit()
-
-    body = (await authed_client.get(f"{PROMPTS}similar/{query_id}")).json()
-
-    matches = {match["prompt_id"]: match for match in body["results"]}
-    assert twin_id in matches
-    assert matches[twin_id]["similarity_score"] == pytest.approx(1.0, abs=1e-6)
-
-
-async def test_the_limit_caps_the_number_of_matches(
-    authed_client: AsyncClient, db_session: AsyncSession, account: factories.Account
-) -> None:
-    query = await factories.create_prompt(db_session, account=account)
-    for index in range(4):
-        await factories.create_prompt(db_session, account=account, title=f"Near {index}")
-    query_id = str(query.id)
-    await db_session.commit()
-
-    body = (
-        await authed_client.get(f"{PROMPTS}similar/{query_id}", params={"limit": 2})
-    ).json()
-
-    assert len(body["results"]) == 2
-    assert body["message"] == "Found 2 similar prompts."
-
-
-async def test_a_limit_of_zero_means_the_default_rather_than_nothing(
-    authed_client: AsyncClient, db_session: AsyncSession, account: factories.Account
-) -> None:
-    """KNOWN DEFECT — ``limit or 10`` treats a legitimate 0 as "unset".
-
-    ``limit=0`` is falsy, so both the search size and the final slice fall back to
-    10 and the caller that asked for no results gets ten. ``Query(default=None,
-    ge=1)`` would reject it instead.
-    """
-    query = await factories.create_prompt(db_session, account=account)
-    for index in range(3):
-        await factories.create_prompt(db_session, account=account, title=f"Filler {index}")
-    query_id = str(query.id)
-    await db_session.commit()
-
-    body = (
-        await authed_client.get(f"{PROMPTS}similar/{query_id}", params={"limit": 0})
-    ).json()
-
-    assert len(body["results"]) > 0
-
-
-async def test_a_negative_limit_is_a_generic_400(
-    authed_client: AsyncClient, db_session: AsyncSession, account: factories.Account
-) -> None:
-    """KNOWN DEFECT — the unvalidated ``limit`` reaches SQL.
-
-    ``search_limit = limit + 1`` stays negative, Postgres rejects ``LIMIT -4``, and
-    the driver error is flattened into the catch-all 400. A ``ge=1`` bound would
-    turn a client typo into a 422 that names the parameter instead of something
-    that reads like a server fault.
-    """
-    prompt = await factories.create_prompt(db_session, account=account)
-    prompt_id = str(prompt.id)
-    await db_session.commit()
-
-    response = await authed_client.get(
-        f"{PROMPTS}similar/{prompt_id}", params={"limit": -5}
-    )
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == GENERIC_400
-
-
-async def test_similar_for_an_unowned_or_unknown_prompt_is_a_404(
-    authed_client: AsyncClient, db_session: AsyncSession, account: factories.Account
-) -> None:
-    stranger = await factories.create_account(db_session)
-    theirs = await factories.create_prompt(db_session, account=stranger)
-    theirs_id = str(theirs.id)
-    await db_session.commit()
-
-    assert (await authed_client.get(f"{PROMPTS}similar/{theirs_id}")).status_code == 404
-    assert (await authed_client.get(f"{PROMPTS}similar/{uuid4()}")).status_code == 404
-
-
-async def test_similar_for_a_malformed_id_is_a_generic_400(
-    authed_client: AsyncClient,
-) -> None:
-    response = await authed_client.get(f"{PROMPTS}similar/not-a-uuid")
-
-    assert response.status_code == 400
-
-
-async def test_a_prompt_with_no_embedding_is_never_a_match(
-    authed_client: AsyncClient, db_session: AsyncSession, account: factories.Account
-) -> None:
-    """``search_prompts_with_vector`` filters ``Prompt.embedding != None``, so a
-    row whose embedding failed to generate is invisible to similarity search —
-    silently, with no error to tell anyone it dropped out of the corpus."""
-    query = await factories.create_prompt(
-        db_session, account=account, original_prompt="identical text for matching"
-    )
-    invisible = await factories.create_prompt(
-        db_session,
-        account=account,
-        original_prompt="identical text for matching",
-        embedding=None,
-    )
-    query_id, invisible_id = str(query.id), str(invisible.id)
-    await db_session.commit()
-
-    body = (await authed_client.get(f"{PROMPTS}similar/{query_id}")).json()
-
-    assert invisible_id not in [match["prompt_id"] for match in body["results"]]
-
-
-async def test_a_soft_deleted_prompt_is_never_a_match(
-    authed_client: AsyncClient, db_session: AsyncSession, account: factories.Account
-) -> None:
-    query = await factories.create_prompt(
-        db_session, account=account, original_prompt="soft delete corpus check"
-    )
-    hidden = await factories.create_prompt(
-        db_session,
-        account=account,
-        original_prompt="soft delete corpus check",
-        deleted_at=datetime.now(timezone.utc),
-    )
-    query_id, hidden_id = str(query.id), str(hidden.id)
-    await db_session.commit()
-
-    body = (await authed_client.get(f"{PROMPTS}similar/{query_id}")).json()
-
-    assert hidden_id not in [match["prompt_id"] for match in body["results"]]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Authentication
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1215,7 +955,7 @@ async def test_every_prompt_route_rejects_an_anonymous_caller(
     401 rather than a 422 that reveals the schema.
     """
     operations = prompt_operations()
-    assert len(operations) >= 11, operations
+    assert len(operations) >= 8, operations
 
     outcomes = {}
     for method, path in operations:

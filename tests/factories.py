@@ -69,8 +69,8 @@ def unique_email(prefix: str = "factory") -> str:
 
     The domain has to satisfy two constraints at once. It must not appear in the
     cloned dev data (real user emails), and it must survive ``pydantic.EmailStr``,
-    because ``/auth/register``, ``/auth/forgot-password``, ``/auth/verify-reset-otp``
-    and both ``/profile/restore*`` routes validate their input with it.
+    because ``/auth/register``, ``/auth/forgot-password`` and
+    ``/auth/verify-reset-otp`` validate their input with it.
 
     That rules out the obvious choices: ``email_validator`` rejects the whole of
     ``SPECIAL_USE_DOMAIN_NAMES`` — ``arpa``, ``invalid``, ``local``, ``localhost``,

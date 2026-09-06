@@ -4,7 +4,7 @@ Settings router — FastAPI endpoints for user settings management (Module B).
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_session as get_db
@@ -58,21 +58,6 @@ async def update_settings(
         show_diff_by_default=body.show_diff_by_default,
         auto_detect_intent=body.auto_detect_intent if isinstance(body.auto_detect_intent, bool) else None,
     )
-
-
-# ── S03: Reset settings to defaults ─────────────────────
-@router.post(
-    "/reset",
-    response_model=SettingsResponse,
-    summary="Reset settings to defaults",
-)
-async def reset_settings(
-    user_id: UUID = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """Restore all settings to factory defaults."""
-    service = SettingsService(db)
-    return await service.reset_settings(user_id)
 
 
 # ── S04: Update theme ───────────────────────────────────
