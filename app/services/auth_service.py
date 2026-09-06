@@ -25,6 +25,8 @@ import logging
 logger = logging.getLogger(__name__)
 from app.core.security import (
     create_access_token,
+    create_refresh_token,
+    decode_refresh_token,
     hash_password,
     hash_password_async,
     verify_password,
@@ -109,9 +111,14 @@ class AuthService:
         if not user.is_active:
             raise UnauthorizedException("Account is deactivated")
 
-        token = create_access_token(data={"sub": str(user.id)})
+        access_token = create_access_token(data={"sub": str(user.id)})
+        refresh_token = create_refresh_token(data={"sub": str(user.id)})
         logger.info(f"User logged in: {user.id}")
-        return TokenResponse(access_token=token, user_id=user.id)
+        return TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            user_id=user.id,
+        )
 
     def verify_google_token(self, raw_id_token: str) -> dict:
         """Verify a Google ID token and return the decoded payload."""
@@ -175,9 +182,38 @@ class AuthService:
             avatar_url=avatar_url,
         )
 
-        token = create_access_token(data={"sub": str(user.id)})
+        access_token = create_access_token(data={"sub": str(user.id)})
+        refresh_token = create_refresh_token(data={"sub": str(user.id)})
         logger.info(f"User logged in with Google: {user.id}")
-        return TokenResponse(access_token=token, user_id=user.id)
+        return TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            user_id=user.id,
+        )
+
+    async def refresh_tokens(self, refresh_token_str: str) -> TokenResponse:
+        """Validate a refresh token and issue a new access token and refresh token."""
+        payload = decode_refresh_token(refresh_token_str)
+        user_id_str = payload.get("sub")
+        if not user_id_str:
+            raise UnauthorizedException("Invalid refresh token payload")
+        try:
+            user_id = UUID(user_id_str)
+        except (ValueError, TypeError):
+            raise UnauthorizedException("Invalid user identifier in refresh token")
+
+        user = await self.repo.get_by_id(user_id)
+        if not user or not user.is_active:
+            raise UnauthorizedException("User not found or account deactivated")
+
+        access_token = create_access_token(data={"sub": str(user.id)})
+        new_refresh_token = create_refresh_token(data={"sub": str(user.id)})
+        logger.info(f"Token refreshed for user: {user.id}")
+        return TokenResponse(
+            access_token=access_token,
+            refresh_token=new_refresh_token,
+            user_id=user.id,
+        )
 
     async def _ensure_profile(
         self,

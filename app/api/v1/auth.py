@@ -2,7 +2,9 @@
 Auth module — FastAPI router for authentication endpoints.
 """
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Response, status
+from typing import Optional
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +14,7 @@ from app.schemas.auth import (
     ForgotPasswordRequest,
     GoogleAuthRequest,
     MessageResponse,
+    RefreshTokenRequest,
     ResetPasswordRequest,
     TokenResponse,
     UserLogin,
@@ -30,8 +33,12 @@ settings = get_settings()
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
-def _set_auth_cookie(response: Response, access_token: str) -> None:
-    """Store the JWT access token in an httpOnly cookie (VULN-017)."""
+def _set_auth_cookies(
+    response: Response,
+    access_token: str,
+    refresh_token: Optional[str] = None,
+) -> None:
+    """Store the JWT access and refresh tokens in httpOnly cookies (VULN-017)."""
     response.set_cookie(
         key=settings.access_cookie_name,
         value=access_token,
@@ -41,6 +48,16 @@ def _set_auth_cookie(response: Response, access_token: str) -> None:
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/",
     )
+    if refresh_token:
+        response.set_cookie(
+            key=settings.refresh_cookie_name,
+            value=refresh_token,
+            httponly=True,
+            secure=settings.COOKIE_SECURE,
+            samesite=settings.cookie_samesite,
+            max_age=settings.refresh_token_expire_days * 86400,
+            path="/",
+        )
 
 
 @router.post(
@@ -85,7 +102,7 @@ async def login(
     """
     service = AuthService(db)
     token = await service.login(email=form_data.username, password=form_data.password)
-    _set_auth_cookie(response, token.access_token)
+    _set_auth_cookies(response, token.access_token, token.refresh_token)
     return token
 
 
@@ -103,19 +120,60 @@ async def google_auth(
     service = AuthService(db)
     token = await service.authenticate_with_google(body.id_token)
     await db.commit()
-    _set_auth_cookie(response, token.access_token)
+    _set_auth_cookies(response, token.access_token, token.refresh_token)
+    return token
+
+
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    summary="Refresh access token using refresh token",
+)
+async def refresh_token(
+    request: Request,
+    response: Response,
+    body: Optional[RefreshTokenRequest] = None,
+    db: AsyncSession = Depends(get_session),
+):
+    """Exchange a valid refresh token for a new access token and refresh token.
+
+    The refresh token may be supplied either in the promptiq_refresh_token
+    cookie or via the JSON request body.
+    """
+    token_str = None
+    if body and body.refresh_token:
+        token_str = body.refresh_token
+    elif request.cookies.get(settings.refresh_cookie_name):
+        token_str = request.cookies.get(settings.refresh_cookie_name)
+
+    if not token_str:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token missing",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    service = AuthService(db)
+    token = await service.refresh_tokens(token_str)
+    _set_auth_cookies(response, token.access_token, token.refresh_token)
     return token
 
 
 @router.post(
     "/logout",
     response_model=MessageResponse,
-    summary="Log out and clear the auth cookie",
+    summary="Log out and clear the auth cookies",
 )
 async def logout(response: Response):
-    """Clear the httpOnly auth cookie."""
+    """Clear the httpOnly auth cookies."""
     response.delete_cookie(
         key=settings.access_cookie_name,
+        path="/",
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.cookie_samesite,
+    )
+    response.delete_cookie(
+        key=settings.refresh_cookie_name,
         path="/",
         secure=settings.COOKIE_SECURE,
         samesite=settings.cookie_samesite,

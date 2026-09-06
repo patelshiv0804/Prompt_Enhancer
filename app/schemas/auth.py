@@ -62,11 +62,17 @@ class ResetPasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=8, max_length=128)
 
 
+class RefreshTokenRequest(BaseModel):
+    """Token refresh request body (optional fallback if not using httpOnly cookie)."""
+    refresh_token: Optional[str] = None
+
+
 # ── Response Schemas ─────────────────────────────────────
 
 class TokenResponse(BaseModel):
     """JWT token response."""
     access_token: str
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
     user_id: UUID
 

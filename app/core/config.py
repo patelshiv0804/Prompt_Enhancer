@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     secret_key: str = "supersecretkey_change_me_in_production"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
+    refresh_token_expire_days: int = 7
 
     # Cookie & CORS Config
     # Comma-separated list of allowed browser origins for CORS (credentials enabled).
@@ -75,6 +76,8 @@ class Settings(BaseSettings):
     cors_origin_regex: str = ""
     # Name of the httpOnly cookie that carries the JWT access token.
     access_cookie_name: str = "promptiq_access_token"
+    # Name of the httpOnly cookie that carries the JWT refresh token.
+    refresh_cookie_name: str = "promptiq_refresh_token"
     # SameSite policy for the auth cookie. "lax" works for same-site dev
     # (localhost:3000 <-> localhost:8000). Set to "none" for cross-domain
     # production deployments (requires Secure, which is auto-enabled in prod).
@@ -198,6 +201,14 @@ class Settings(BaseSettings):
     @property
     def ACCESS_TOKEN_EXPIRE_MINUTES(self) -> int:
         return self.access_token_expire_minutes
+
+    @property
+    def REFRESH_TOKEN_EXPIRE_DAYS(self) -> int:
+        return self.refresh_token_expire_days
+
+    @property
+    def REFRESH_COOKIE_NAME(self) -> str:
+        return self.refresh_cookie_name
 
     @property
     def GOOGLE_CLIENT_ID(self) -> str:
