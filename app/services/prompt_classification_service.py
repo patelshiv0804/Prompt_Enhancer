@@ -7,6 +7,7 @@ from typing import Any
 from app.core import redis_client
 from app.core.config import settings
 from app.services.llm.base import BaseLLMProvider
+from app.services.prompt_sanitizer import neutralize_delimiters
 
 logger = logging.getLogger("promptiq.prompt_classification")
 
@@ -16,7 +17,12 @@ _DEEP_KEYWORDS = frozenset([
     "detailed", "step-by-step", "roadmap", "framework", "in-depth",
 ])
 
-_CLASSIFIER_PROMPT = (
+# The user prompt is appended via safe string concatenation in classify() —
+# NOT via .format() — to prevent delimiter or curly-brace injection.
+# [PROMPT START] / [PROMPT END] labels cannot be collapsed by the sanitizer
+# (unlike <<< / >>> which are stripped by neutralize_delimiters), so they
+# cannot be forged by a user prompt that contains those exact strings.
+_CLASSIFIER_PROMPT_HEADER = (
     "You are an expert prompt engineer. Classify the complexity of the user prompt below "
     "and decide how deeply it needs to be enhanced.\n\n"
     "Rules:\n"
@@ -24,9 +30,9 @@ _CLASSIFIER_PROMPT = (
     "- standard: prompt has good intent but lacks role, context, format, or constraints.\n"
     "- deep: prompt is vague, multi-part, strategic, or requires exhaustive restructuring.\n\n"
     "Respond ONLY with a valid JSON object — no markdown, no extra text:\n"
-    '{{"level": "minimal"|"standard"|"deep", "reason": "<one sentence>"}}\n\n'
+    '{"level": "minimal"|"standard"|"deep", "reason": "<one sentence>"}\n\n'
     "User prompt:\n"
-    "<<<\n{prompt}\n>>>"
+    "[PROMPT START]\n"
 )
 
 _FALLBACK_RESULT: dict[str, str] = {"level": "standard", "reason": "Default depth applied."}
@@ -87,7 +93,16 @@ class PromptClassificationService:
             return cached
 
         try:
-            classifier_prompt = _CLASSIFIER_PROMPT.format(prompt=stripped)
+            # Sanitize delimiter runs before interpolation so the user cannot
+            # escape the [PROMPT START]/[PROMPT END] fence via <<<, >>>, etc.
+            safe_stripped = neutralize_delimiters(stripped)
+            # Safe concatenation: avoids .format() so {curly_braces} in the
+            # prompt cannot be interpreted as Python format-string keys.
+            classifier_prompt = (
+                _CLASSIFIER_PROMPT_HEADER
+                + safe_stripped
+                + "\n[PROMPT END]"
+            )
             result = await self.llm_provider.generate(
                 prompt=classifier_prompt,
                 max_tokens=120,

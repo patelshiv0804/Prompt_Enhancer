@@ -20,12 +20,12 @@ class PromptComparisonService:
     and a percentage quality delta.
     """
 
-    COMPARISON_PROMPT_TEMPLATE = (
-        "Compare the following Original Prompt with the Enhanced Prompt:\n\n"
-        "Original Prompt:\n"
-        "\"{original_prompt}\"\n\n"
-        "Enhanced Prompt:\n"
-        "\"{enhanced_prompt}\"\n\n"
+    # The original and enhanced prompts are appended via safe string
+    # concatenation in compare() — NOT via .format() — to prevent
+    # {curly_braces} in user input or LLM output from being interpreted
+    # as Python format-string keys.
+    COMPARISON_PROMPT_HEADER = (
+        "Compare the following Original Prompt with the Enhanced Prompt.\n\n"
         "Identify the improvements and differences. Respond ONLY with a valid JSON object matching the following structure. Do not include markdown code block formatting or extra text:\n"
         "{{\n"
         "  \"differences\": \"<general summary of differences>\",\n"
@@ -52,9 +52,19 @@ class PromptComparisonService:
         if not original_prompt.strip() or not enhanced_prompt.strip():
             raise PromptComparisonException("Original and enhanced prompts cannot be empty.")
 
-        comparison_prompt = self.COMPARISON_PROMPT_TEMPLATE.format(
-            original_prompt=original_prompt,
-            enhanced_prompt=enhanced_prompt,
+        # Safe concatenation: avoids Python .format() so that {curly_braces}
+        # inside either prompt (the enhanced_prompt is LLM output re-used as
+        # input) cannot be interpreted as format-string keys.
+        comparison_prompt = (
+            self.COMPARISON_PROMPT_HEADER
+            + "\nOriginal Prompt:\n"
+            + "[ORIGINAL PROMPT START]\n"
+            + original_prompt
+            + "\n[ORIGINAL PROMPT END]\n\n"
+            + "Enhanced Prompt:\n"
+            + "[ENHANCED PROMPT START]\n"
+            + enhanced_prompt
+            + "\n[ENHANCED PROMPT END]\n"
         )
 
         start_time = time.perf_counter()

@@ -20,6 +20,7 @@ from app.services.llm.exceptions import LLMTimeoutError, LLMRequestError
 from app.services.template_retrieval_service import TemplateRetrievalService
 from app.services.template_renderer import TemplateRenderer
 from app.services.prompt_builder import PromptBuilder
+from app.services.prompt_sanitizer import neutralize_delimiters, sanitize_variables
 
 logger = logging.getLogger("promptiq.prompt_enhancement")
 
@@ -61,6 +62,12 @@ class PromptEnhancementService:
             raise PromptValidationException("Prompt content cannot be empty.")
         if len(prompt) > 12000:
             raise PromptValidationException(f"Prompt content is too long ({len(prompt)} chars). Max 12000 chars.")
+
+        # Sanitize all user-controlled inputs before any LLM interpolation.
+        # This collapses structural delimiter runs (===, <<<, >>>, ```) that
+        # could otherwise forge trusted section boundaries inside the prompt.
+        prompt = neutralize_delimiters(prompt)
+        variables = sanitize_variables(variables)
 
         # STEP 2: Retrieve a template for a new enhancement, or use the
         # persisted template for re-enhancement. The latter must not trigger
@@ -106,7 +113,11 @@ class PromptEnhancementService:
 
         while current_try <= max_retries:
             try:
-                final_prompt = self.prompt_builder.build_final_prompt(
+                # Use build_messages() so system guardrails are sent as a
+                # real system-role message and all user-derived content
+                # (role, mode, template, raw prompt) stays in the user message.
+                # This system/user separation is the primary injection defense.
+                messages = self.prompt_builder.build_messages(
                     role=role,
                     mode=mode,
                     rendered_template=rendered_template,
@@ -114,13 +125,18 @@ class PromptEnhancementService:
                     style_attributes=style_attributes,
                     enhancement_level=enhancement_level,
                 )
-                
-                logger.info("Calling LLM provider. Compiled prompt size: %d chars", len(final_prompt))
-                
+
+                logger.info(
+                    "Calling LLM provider. System size: %d chars, user size: %d chars",
+                    len(messages["system"]),
+                    len(messages["user"]),
+                )
+
                 # Profile LLM Latency
                 start_time = time.perf_counter()
                 result = await self.llm_provider.optimize_prompt(
-                    prompt=final_prompt,
+                    prompt=messages["user"],
+                    system=messages["system"],
                     template_id=template_id,
                     max_tokens=settings.mistral_optimization_max_tokens,
                 )
@@ -200,6 +216,10 @@ class PromptEnhancementService:
         if len(prompt) > 12000:
             raise PromptValidationException(f"Prompt content is too long ({len(prompt)} chars). Max 12000 chars.")
 
+        # Sanitize user-controlled inputs before LLM interpolation.
+        prompt = neutralize_delimiters(prompt)
+        variables = sanitize_variables(variables)
+
         # STEP 2: Template selection (explicit override or semantic retrieval)
         if template_override is not None:
             selected_temp = {
@@ -235,9 +255,9 @@ class PromptEnhancementService:
             logger.exception("Unexpected rendering error")
             raise TemplateRenderException("Unexpected error during template variable rendering.") from exc
 
-        # STEP 4: Build the final prompt. Single attempt — streaming cannot
+        # STEP 4: Build system/user messages. Single attempt — streaming cannot
         # transparently retry once bytes have been sent to the client.
-        final_prompt = self.prompt_builder.build_final_prompt(
+        messages = self.prompt_builder.build_messages(
             role=role,
             mode=mode,
             rendered_template=rendered_template,
@@ -256,11 +276,16 @@ class PromptEnhancementService:
         }
 
         # STEP 5: Stream tokens, accumulating raw text for post-processing.
-        logger.info("Streaming LLM provider. Compiled prompt size: %d chars", len(final_prompt))
+        logger.info(
+            "Streaming LLM provider. System size: %d chars, user size: %d chars",
+            len(messages["system"]),
+            len(messages["user"]),
+        )
         start_time = time.perf_counter()
         buffer: list[str] = []
         async for delta in self.llm_provider.optimize_prompt_stream(
-            prompt=final_prompt,
+            prompt=messages["user"],
+            system=messages["system"],
             max_tokens=settings.mistral_optimization_max_tokens,
         ):
             buffer.append(delta)

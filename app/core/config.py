@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     httpx_max_connections: int = 100
     httpx_max_keepalive_connections: int = 20
     max_retries: int = 3
+    # Prompt-injection hardening: when True, trusted instructions are sent as a
+    # separate `system` chat message (user text stays in the `user` message) and
+    # user-derived text has section delimiters (===, <<<, >>>, ```) neutralized
+    # before interpolation. Set to False to restore the legacy single-message
+    # prompt assembly unchanged.
+    prompt_injection_protection: bool = True
     prompt_analysis_model: str = "mistral-large-latest"
     prompt_analysis_temperature: float = 0.2
     prompt_score_threshold: float = 5.0
