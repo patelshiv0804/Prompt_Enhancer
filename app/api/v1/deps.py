@@ -82,15 +82,16 @@ def get_profile_repository() -> ProfileRepository:
     return ProfileRepository()
 
 # Provider Client & Low-level Services
-from app.services.llm.mistral_provider import MistralProvider
+from app.services.llm.factory import LLMFactory
+from app.services.llm.base import BaseLLMProvider
 from app.services.embedding_service import EmbeddingService
 from app.services.ranking_service import RankingService
 from app.services.template_renderer import TemplateRenderer
 from app.services.prompt_builder import PromptBuilder
 from app.services.template_variable_extractor import TemplateVariableExtractor
 
-def get_llm_provider() -> MistralProvider:
-    return MistralProvider()
+def get_llm_provider() -> BaseLLMProvider:
+    return LLMFactory.get_provider()
 
 def get_embedding_service() -> EmbeddingService:
     return EmbeddingService()
@@ -127,7 +128,7 @@ from app.services.mode_resolution_service import ModeResolutionService
 from app.services.candidate_template_service import CandidateTemplateService
 
 def get_intent_analysis_service(
-    llm: MistralProvider = Depends(get_llm_provider),
+    llm: BaseLLMProvider = Depends(get_llm_provider),
 ) -> IntentAnalysisService:
     return IntentAnalysisService(llm_provider=llm)
 
@@ -166,7 +167,7 @@ def get_template_retrieval_service(
     )
 
 def get_prompt_enhancement_service(
-    llm: MistralProvider = Depends(get_llm_provider),
+    llm: BaseLLMProvider = Depends(get_llm_provider),
     retrieval: TemplateRetrievalService = Depends(get_template_retrieval_service),
     renderer: TemplateRenderer = Depends(get_template_renderer),
     builder: PromptBuilder = Depends(get_prompt_builder),
@@ -181,12 +182,12 @@ def get_prompt_enhancement_service(
     )
 
 def get_prompt_analysis_service(
-    llm: MistralProvider = Depends(get_llm_provider),
+    llm: BaseLLMProvider = Depends(get_llm_provider),
 ) -> PromptAnalysisService:
     return PromptAnalysisService(llm_provider=llm)
 
 def get_prompt_comparison_service(
-    llm: MistralProvider = Depends(get_llm_provider),
+    llm: BaseLLMProvider = Depends(get_llm_provider),
 ) -> PromptComparisonService:
     return PromptComparisonService(llm_provider=llm)
 
@@ -217,7 +218,7 @@ def get_prompt_regeneration_service(
     version_service: PromptVersionService = Depends(get_prompt_version_service),
     emb_service: PromptEmbeddingService = Depends(get_prompt_embedding_service),
     analysis: PromptAnalysisService = Depends(get_prompt_analysis_service),
-    llm: MistralProvider = Depends(get_llm_provider),
+    llm: BaseLLMProvider = Depends(get_llm_provider),
     enhancement: PromptEnhancementService = Depends(get_prompt_enhancement_service),
 ) -> PromptRegenerationService:
     return PromptRegenerationService(
@@ -306,6 +307,6 @@ def get_tool_recommendation_service(
 from app.services.prompt_classification_service import PromptClassificationService
 
 def get_prompt_classification_service(
-    llm: MistralProvider = Depends(get_llm_provider),
+    llm: BaseLLMProvider = Depends(get_llm_provider),
 ) -> PromptClassificationService:
     return PromptClassificationService(llm_provider=llm)

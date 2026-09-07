@@ -286,7 +286,7 @@ def create_app() -> FastAPI:
     async def shutdown_event() -> None:
         # Release Redis sockets on shutdown. A no-op when Redis was never used.
         await redis_client.close_client()
-        # Close the shared Mistral HTTP client's connection pool.
+        # Close the shared LLM HTTP client's connection pool.
         from app.services.llm.mistral_provider import close_shared_client
         await close_shared_client()
 

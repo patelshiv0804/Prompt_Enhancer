@@ -15,7 +15,6 @@ from app.api.v1.deps import (
     get_current_user,
     get_prompt_enhancement_service,
     get_prompt_analysis_service,
-    get_prompt_comparison_service,
     get_prompt_persistence_service,
     get_profile_repository,
     get_template_repository,
@@ -35,7 +34,6 @@ from app.services.exceptions import (
 )
 from app.services.prompt_enhancement_service import PromptEnhancementService
 from app.services.prompt_analysis_service import PromptAnalysisService
-from app.services.prompt_comparison_service import PromptComparisonService
 from app.services.prompt_persistence_service import PromptPersistenceService
 from app.services.tool_recommendation_service import ToolRecommendationService
 from app.services.prompt_classification_service import PromptClassificationService
@@ -83,11 +81,6 @@ class EnhancePromptRequest(BaseModel):
 
 class AnalyzePromptRequest(BaseModel):
     prompt: str = Field(..., max_length=settings.max_prompt_chars, description="Prompt content to analyze", examples=["Find my ideal customer."])
-
-
-class ComparePromptsRequest(BaseModel):
-    original_prompt: str = Field(..., max_length=settings.max_prompt_chars, description="Original raw prompt content")
-    enhanced_prompt: str = Field(..., max_length=settings.max_prompt_chars, description="Enhanced optimized prompt content")
 
 
 # Response Models
@@ -161,7 +154,7 @@ async def _process_background_analysis(
     logger.info("Starting background analysis for prompt_id=%s", prompt_id)
     try:
         from app.db.session import async_session
-        from app.services.llm.mistral_provider import MistralProvider
+        from app.services.llm.factory import LLMFactory
         from app.services.prompt_analysis_service import PromptAnalysisService
         from app.services.prompt_comparison_service import PromptComparisonService
         from app.services.tool_recommendation_service import ToolRecommendationService
@@ -169,7 +162,7 @@ async def _process_background_analysis(
         from app.repositories.prompt import PromptRepository
         from app.repositories.prompt_version import PromptVersionRepository
 
-        llm_provider = MistralProvider()
+        llm_provider = LLMFactory.get_provider()
         analysis_service = PromptAnalysisService(llm_provider=llm_provider)
         # comparison_service = PromptComparisonService(llm_provider=llm_provider)
         embedding_service = EmbeddingService()
@@ -605,23 +598,6 @@ async def analyze_prompt(
 ) -> dict[str, Any]:
     try:
         return await analysis_service.analyze(payload.prompt)
-    except Exception as exc:
-        raise map_service_error(exc)
-
-
-@router.post(
-    "/compare",
-    response_model=dict[str, Any],
-    dependencies=[Depends(llm_rate_limiter)],
-    summary="Compare Original and Enhanced Prompts",
-    description="Generates differential metrics, fixed gaps, readability scores, and estimated quality score delta between two prompts.",
-)
-async def compare_prompts(
-    payload: ComparePromptsRequest,
-    comparison_service: PromptComparisonService = Depends(get_prompt_comparison_service),
-) -> dict[str, Any]:
-    try:
-        return await comparison_service.compare(payload.original_prompt, payload.enhanced_prompt)
     except Exception as exc:
         raise map_service_error(exc)
 

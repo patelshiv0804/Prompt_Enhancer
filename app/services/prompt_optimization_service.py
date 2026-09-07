@@ -30,7 +30,7 @@ class PromptOptimizationService:
                 prompt=user_prompt,
                 template_id=selected_template["template_id"],
                 mode=mode,
-                max_tokens=settings.mistral_optimization_max_tokens,
+                max_tokens=settings.llm_optimization_max_tokens,
             )
         except Exception as exc:
             logger.exception("Prompt optimization failed")

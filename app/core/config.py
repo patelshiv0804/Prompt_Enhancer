@@ -1,4 +1,4 @@
-from pydantic import model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,19 +16,51 @@ class Settings(BaseSettings):
     database_url: str
     environment: str = "development"
     pgvector_extension: str = "vector"
-    llm_provider: str = "mistral"
-    mistral_api_key: str = ""
-    mistral_model: str = "mistral-large-latest"
-    mistral_timeout: float = 60.0
-    mistral_temperature: float = 0.3
-    mistral_max_tokens: int = 1024
-    mistral_optimization_max_tokens: int = 8192
-    # Connect timeout for the shared Mistral HTTP client. Kept short and
-    # separate from the (long) read timeout so a dead/slow TCP+TLS handshake
-    # fails fast instead of waiting the full mistral_timeout.
-    mistral_connect_timeout: float = 5.0
+    llm_provider: str = Field(
+        default="groq",
+        validation_alias=AliasChoices("LLM_PROVIDER", "GROQ_PROVIDER", "MISTRAL_PROVIDER"),
+    )
+    llm_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("LLM_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY"),
+    )
+    llm_base_url: str = Field(
+        default="https://api.groq.com/openai/v1",
+        validation_alias=AliasChoices("LLM_BASE_URL", "GROQ_BASE_URL", "MISTRAL_BASE_URL"),
+    )
+    llm_model: str = Field(
+        default="openai/gpt-oss-120b",
+        validation_alias=AliasChoices("LLM_MODEL", "GROQ_MODEL", "MISTRAL_MODEL"),
+    )
+    llm_timeout: float = Field(
+        default=60.0,
+        validation_alias=AliasChoices("LLM_TIMEOUT", "GROQ_TIMEOUT", "MISTRAL_TIMEOUT"),
+    )
+    llm_temperature: float = Field(
+        default=0.3,
+        validation_alias=AliasChoices("LLM_TEMPERATURE", "GROQ_TEMPERATURE", "MISTRAL_TEMPERATURE"),
+    )
+    llm_max_tokens: int = Field(
+        default=1024,
+        validation_alias=AliasChoices("LLM_MAX_TOKENS", "GROQ_MAX_TOKENS", "MISTRAL_MAX_TOKENS"),
+    )
+    llm_optimization_max_tokens: int = Field(
+        default=8192,
+        validation_alias=AliasChoices(
+            "LLM_OPTIMIZATION_MAX_TOKENS",
+            "GROQ_OPTIMIZATION_MAX_TOKENS",
+            "MISTRAL_OPTIMIZATION_MAX_TOKENS",
+        ),
+    )
+    # Connect timeout for the shared OpenAI-compatible HTTP client. Kept short
+    # and separate from the (long) read timeout so a dead/slow TCP+TLS
+    # handshake fails fast instead of waiting the full llm_timeout.
+    llm_connect_timeout: float = Field(
+        default=5.0,
+        validation_alias=AliasChoices("LLM_CONNECT_TIMEOUT", "GROQ_CONNECT_TIMEOUT", "MISTRAL_CONNECT_TIMEOUT"),
+    )
     # Bounds for the process-wide shared httpx.AsyncClient connection pool
-    # (reused across all Mistral calls instead of opening a new TLS connection
+    # (reused across all LLM calls instead of opening a new TLS connection
     # per request). Keepalive lets warm connections be reused; max_connections
     # caps concurrent sockets so bursts can't exhaust ephemeral ports.
     httpx_max_connections: int = 100
@@ -99,7 +131,7 @@ class Settings(BaseSettings):
     # Hard cap on the length of any single prompt field accepted by the LLM
     # routes. Oversized bodies are rejected at validation time (HTTP 422) before
     # they reach the model — bounding both memory use and per-request LLM cost.
-    # Sized to comfortably fit a full deep-enhancement output (the mistral
+    # Sized to comfortably fit a full deep-enhancement output (the LLM
     # optimization cap is 8192 tokens ~= 32k chars), since that output may be
     # re-submitted to /analyze or /compare — while still rejecting the multi-MB
     # bodies a cost/OOM attack would use. The per-IP LLM rate limit above is the
@@ -213,6 +245,38 @@ class Settings(BaseSettings):
     @property
     def GOOGLE_CLIENT_ID(self) -> str:
         return self.google_client_id
+
+    @property
+    def prompt_analysis_model(self) -> str:
+        return self.llm_model
+
+    @property
+    def mistral_api_key(self) -> str:
+        return self.llm_api_key
+
+    @property
+    def mistral_model(self) -> str:
+        return self.llm_model
+
+    @property
+    def mistral_timeout(self) -> float:
+        return self.llm_timeout
+
+    @property
+    def mistral_temperature(self) -> float:
+        return self.llm_temperature
+
+    @property
+    def mistral_max_tokens(self) -> int:
+        return self.llm_max_tokens
+
+    @property
+    def mistral_optimization_max_tokens(self) -> int:
+        return self.llm_optimization_max_tokens
+
+    @property
+    def mistral_connect_timeout(self) -> float:
+        return self.llm_connect_timeout
 
     @property
     def GOOGLE_CLIENT_IDS(self) -> list[str]:

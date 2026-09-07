@@ -150,7 +150,7 @@ class PromptEnhancementService:
                     prompt=messages["user"],
                     system=messages["system"],
                     template_id=template_id,
-                    max_tokens=settings.mistral_optimization_max_tokens,
+                    max_tokens=settings.llm_optimization_max_tokens,
                 )
                 latency = time.perf_counter() - start_time
 
@@ -158,11 +158,11 @@ class PromptEnhancementService:
 
                 # Validate Response content
                 if not enhanced_prompt or not isinstance(enhanced_prompt, str):
-                    raise LLMResponseException("Mistral returned an empty or invalid content response.")
+                    raise LLMResponseException("LLM provider returned an empty or invalid content response.")
 
                 # Check if LLM solved the task instead of optimizing the prompt
                 if self.is_task_execution(enhanced_prompt, prompt):
-                    logger.warning("Mistral output looks like direct task execution. Retrying with stronger guidelines...")
+                    logger.warning("LLM output looks like direct task execution. Retrying with stronger guidelines...")
                     # Prepare stronger instructions warning for next attempt
                     strong_sys_instructions = (
                         f"{PromptBuilder.DEFAULT_SYSTEM_INSTRUCTIONS}\n\n"
@@ -171,7 +171,7 @@ class PromptEnhancementService:
                         f"a prompt template like 'Act as a marketer, define target demographics...', NOT a list of customers. "
                         f"Generate ONLY the enhanced prompt. DO NOT solve the task!"
                     )
-                    raise LLMResponseException("Mistral returned task execution instead of prompt enhancement.")
+                    raise LLMResponseException("LLM provider returned task execution instead of prompt enhancement.")
 
                 logger.info("Prompt enhanced successfully. Latency: %.4fs, attempts: %d", latency, current_try + 1)
                 return {
@@ -185,7 +185,7 @@ class PromptEnhancementService:
             except LLMTimeoutError as exc:
                 current_try += 1
                 if current_try > max_retries:
-                    raise LLMTimeoutException("Mistral API request timed out after maximum retries.") from exc
+                    raise LLMTimeoutException("LLM API request timed out after maximum retries.") from exc
                 await self._backoff_sleep(current_try)
 
             except (LLMRequestError, LLMResponseException) as exc:
@@ -309,7 +309,7 @@ class PromptEnhancementService:
         async for delta in self.llm_provider.optimize_prompt_stream(
             prompt=messages["user"],
             system=messages["system"],
-            max_tokens=settings.mistral_optimization_max_tokens,
+            max_tokens=settings.llm_optimization_max_tokens,
         ):
             buffer.append(delta)
             yield {"type": "delta", "text": delta}
@@ -319,12 +319,12 @@ class PromptEnhancementService:
         enhanced_prompt = self._clean_enhanced_output(raw_output)
 
         if not enhanced_prompt or not isinstance(enhanced_prompt, str):
-            raise LLMResponseException("Mistral returned an empty or invalid content response.")
+            raise LLMResponseException("LLM provider returned an empty or invalid content response.")
 
         # Best-effort guard: the blocking path retries on task-execution slips,
         # but a stream has already emitted its bytes, so we only log here.
         if self.is_task_execution(enhanced_prompt, prompt):
-            logger.warning("Streamed Mistral output looks like direct task execution (not retried in stream mode).")
+            logger.warning("Streamed LLM output looks like direct task execution (not retried in stream mode).")
 
         logger.info("Streaming prompt enhanced successfully. Latency: %.4fs", latency)
         yield {

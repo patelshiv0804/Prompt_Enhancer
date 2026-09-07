@@ -1,0 +1,84 @@
+# docker-compose.loadtest.yml — the stack the k6 scripts in ./load measure.
+#
+# Always an overlay, never standalone:
+#
+#   1. bash scripts/bootstrap_test_db.sh              # build prompt_enhancer_test
+#   2. docker compose -f docker-compose.yml -f docker-compose.loadtest.yml up -d web
+#   3. docker compose -f docker-compose.yml -f docker-compose.loadtest.yml run --rm k6 \
+#        run /scripts/smoke.js
+#
+# STEP 2 IS NOT OPTIONAL. `compose run` starts a stopped dependency but will
+# happily reuse a `web` container that is already up with the *base* config — and
+# that one is pointed at the development database. `up -d web` sees the changed
+# environment and recreates the container, which is what actually moves the API
+# onto the test database.
+#
+# There is deliberately no .env.loadtest: `.env.*` is gitignored (line 15), so
+# such a file could not be committed and every other checkout would fail at
+# `env_file`. Everything that must be reproducible lives here instead; LOAD_* knobs
+# are read from your shell and default inside load/lib/config.js.
+
+services:
+  web:
+    # A dev server measures the file watcher as much as the application. The base
+    # command is `uvicorn ... --reload`; drop it, and make the worker count
+    # explicit because both the in-process rate limiter and the connection pool
+    # are per worker. Record whatever this is set to alongside any number the load
+    # scripts produce. Code edits need a container restart under this profile.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${WEB_CONCURRENCY:-1}
+    environment:
+      # The one line that makes this safe to run: load traffic authenticates as a
+      # real account, and the development database is read-only for the whole test
+      # suite. scripts/bootstrap_test_db.sh builds this database.
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}_test
+      # Take the coarse global limiter out of the measurement. Every VU shares the
+      # k6 container's IP and RateLimitMiddleware is keyed per IP, so at the 300/60s
+      # default a ramped read run would measure the limiter after ~5 req/s.
+      # rate-limit.js proves limiting still works; these two make everything else
+      # measure the application. RATE_LIMIT_ENABLED stays on so the middleware is
+      # still in the request path and its cost is still counted.
+      - RATE_LIMIT_MAX_REQUESTS=100000
+      - LLM_RATE_LIMIT_MAX_REQUESTS=100000
+      # Neither of these touches POST /auth/login: sensitive_rate_limiter is built
+      # with 5/60s hardcoded at app/middleware/rate_limit.py:112. That is why the
+      # load scripts log in exactly once, in setup().
+    healthcheck:
+      # The image's baked-in HEALTHCHECK calls /api/v1/health/, which reaches the
+      # Mistral API. /health/liveness returns a literal dict — no database, no
+      # provider — so it is the right probe here and lets k6 wait on
+      # service_healthy instead of racing a still-booting API.
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/v1/health/liveness"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      # First boot loads the sentence-transformers model; failures inside this
+      # window do not count as retries.
+      start_period: 40s
+
+  k6:
+    image: grafana/k6:0.54.0
+    # No container_name on purpose: `compose run` creates a fresh container each
+    # invocation and a fixed name collides with the previous one.
+    environment:
+      # Pass-through only. Every one of these is optional, and an unset variable
+      # arrives as the empty string, which every reader in load/lib/config.js
+      # treats as absent (`__ENV.X || default`) — so the defaults live in exactly
+      # one place instead of being duplicated here.
+      LOAD_BASE_URL: ${LOAD_BASE_URL:-}
+      LOAD_EMAIL: ${LOAD_EMAIL:-}
+      LOAD_PASSWORD: ${LOAD_PASSWORD:-}
+      LOAD_VUS: ${LOAD_VUS:-}
+      LOAD_DURATION: ${LOAD_DURATION:-}
+      LOAD_RAMP: ${LOAD_RAMP:-}
+      LOAD_ATTEMPTS: ${LOAD_ATTEMPTS:-}
+    volumes:
+      # Read-only: a load script has no business writing into the repo.
+      - ./load:/scripts:ro
+    # Overridden by anything passed after the service name, e.g.
+    # `run --rm k6 run /scripts/read-heavy.js`.
+    command: run /scripts/smoke.js
+    depends_on:
+      web:
+        condition: service_healthy
+    networks:
+      - promptiq-network

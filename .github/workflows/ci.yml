@@ -1,56 +1,311 @@
-name: PromptIQ CI Workflow
+# PromptIQ backend CI.
+#
+# Three tiers, split by what they need to be able to run:
+#
+#   unit         no database, no network, no model weights. Seconds. Runs first
+#                and gates the rest, so an obvious break is not paid for twice.
+#   integration  a real Postgres with pgvector, built by the same
+#                scripts/bootstrap_test_db.sh developers run locally — in
+#                `migrate` mode, which builds the schema from Alembic and fills
+#                it with scripts/seed.py. `clone` mode copies real user rows and
+#                the script refuses to run it when CI is set.
+#   contract     Schemathesis fuzzing over /openapi.json, plus two assertions on
+#                the served document. Hypothesis makes it slow, so it is nightly
+#                and on demand rather than PR-blocking.
+#   load-smoke   the deterministic half of the k6 tier: load/smoke.js (every read
+#                endpoint answers correctly over real HTTP) and load/rate-limit.js
+#                (the login limiter still returns 429). Nightly and on demand.
+#                load/read-heavy.js is deliberately NOT here — latency measured on
+#                a shared runner is noise, and a threshold on it would fail for
+#                reasons that have nothing to do with the code.
+#
+# The Postgres image is pinned to the same tag as docker-compose.yml, so the
+# pgvector version CI tests against is the one developers have locally.
+name: CI
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master, develop ]
+    branches: [main, master]
+  schedule:
+    # 02:30 UTC nightly — the only time the contract tier runs on its own.
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: '3.11'
+  # ENVIRONMENT must not be "production": app/core/config.py rejects a weak
+  # SECRET_KEY and a dev auth bypass only under that value, and CI supplies
+  # neither a real key nor real secrets.
+  ENVIRONMENT: test
+  SECRET_KEY: ci-secret-key-not-used-outside-github-actions-32ch
+  ALGORITHM: HS256
+  # Never called: tests/conftest.py patches MistralProvider's methods onto a
+  # stub. Present only so Settings construction never depends on a secret.
+  MISTRAL_API_KEY: ci-dummy-key
+  LLM_PROVIDER: mistral
 
 jobs:
-  test:
+  unit:
+    name: Unit (no database)
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    env:
+      # Deliberately unroutable. tests/conftest.py needs settings.database_url to
+      # exist because it derives the test URL from it, but the unit tier never
+      # opens a connection — proving that here is what keeps this job fast and
+      # keeps `-m unit` honest about being DB-free.
+      DATABASE_URL: postgresql+asyncpg://unit:unit@127.0.0.1:1/prompt_enhancer
+    steps:
+      - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run unit tier
+        run: pytest tests/unit -m unit
+
+  integration:
+    name: Integration (Postgres + pgvector)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    needs: unit
+    services:
+      postgres:
+        # Same tag as docker-compose.yml: pgvector 0.5.1 on PostgreSQL 15.
+        image: ankane/pgvector:v0.5.1
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: prompt_enhancer
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d prompt_enhancer"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # The bootstrap script reads these; TEST_DB defaults to <POSTGRES_DB>_test,
+      # and tests/conftest.py independently derives the same name by appending
+      # `_test` to DATABASE_URL. Both must agree, so neither is hardcoded twice.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: prompt_enhancer
+      PGHOST: localhost
+      PGPORT: '5432'
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/prompt_enhancer
+      # Redis is not a service here on purpose: tests/conftest.py sets
+      # redis_enabled=False, so every cache call degrades to a miss. If the suite
+      # ever needs Redis to pass, that is a regression in test isolation.
+      CORS_ORIGINS: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Ensure a psql client is present
+        run: command -v psql || (sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client)
+
+      - name: Build the test database
+        # `migrate` because CI has no dev database to clone from. BOOTSTRAP_RUNNER
+        # is explicit rather than auto-detected so a future runner image that
+        # happens to ship docker cannot silently change how this step behaves.
+        run: BOOTSTRAP_RUNNER=native bash scripts/bootstrap_test_db.sh migrate
+
+      - name: Harness gate
+        # Rollback isolation, stub injection and the auth fixture, checked before
+        # anything is built on top of them. A failure here means every later
+        # failure is untrustworthy, so it gets its own step to be unmissable.
+        run: pytest tests/test_harness.py
+
+      - name: Run integration tier
+        run: pytest tests/integration --cov=app --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: coverage.xml
+          if-no-files-found: warn
+
+  contract:
+    name: Contract (OpenAPI fuzz)
+    runs-on: ubuntu-latest
+    # Hypothesis-driven and slow, so nightly and on demand rather than
+    # PR-blocking. The Schemathesis test itself builds its own stubbed app and
+    # needs no database, but the two sibling tests that assert the served
+    # /openapi.json document use the shared `client` fixture, which pulls in
+    # db_session — so the tier as a whole still needs Postgres.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     services:
       postgres:
         image: ankane/pgvector:v0.5.1
         env:
-          POSTGRES_USER: kartik
-          POSTGRES_PASSWORD: kartik123
-          POSTGRES_DB: promptiq
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: prompt_enhancer
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres -d prompt_enhancer"
           --health-interval 10s
           --health-timeout 5s
-          --health-retries 5
-
+          --health-retries 10
+    env:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: prompt_enhancer
+      PGHOST: localhost
+      PGPORT: '5432'
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/prompt_enhancer
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio httpx
+          pip install -r requirements.txt -r requirements-dev.txt
 
-      - name: Run Database Migrations
-        env:
-          DATABASE_URL: postgresql+asyncpg://kartik:kartik123@localhost:5432/promptiq
-        run: |
-          # If migrations need to run before tests, uncomment:
-          # python -m alembic upgrade head
+      - name: Ensure a psql client is present
+        run: command -v psql || (sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client)
 
-      - name: Run Test Suite (pytest)
+      - name: Build the test database
+        run: BOOTSTRAP_RUNNER=native bash scripts/bootstrap_test_db.sh migrate
+
+      - name: Run contract tier
+        run: pytest tests/contract
+
+  load-smoke:
+    name: Load (k6 smoke + limiter)
+    runs-on: ubuntu-latest
+    # Nightly and on demand. These two scripts assert behaviour, not latency, so
+    # they would be safe on every PR — but they need a real uvicorn process and a
+    # bootstrapped database, and the integration tier already covers the same
+    # endpoints through ASGI transport with proper per-test isolation. The value
+    # here is that it goes over the wire.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    services:
+      postgres:
+        image: ankane/pgvector:v0.5.1
         env:
-          DATABASE_URL: postgresql+asyncpg://kartik:kartik123@localhost:5432/promptiq
-          PYTHONPATH: .
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: prompt_enhancer
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d prompt_enhancer"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: prompt_enhancer
+      PGHOST: localhost
+      PGPORT: '5432'
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/prompt_enhancer
+      CORS_ORIGINS: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
         run: |
-          python -m pytest tests/
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Ensure a psql client is present
+        run: command -v psql || (sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client)
+
+      - name: Build the test database
+        run: BOOTSTRAP_RUNNER=native bash scripts/bootstrap_test_db.sh migrate
+
+      - name: Start the API against the test database
+        # The load scripts log in as test@promptiq.test, which the bootstrap
+        # upserts into <POSTGRES_DB>_test only — hence the overridden URL. One
+        # worker, so rate-limit.js sees a budget of exactly 5.
+        #
+        # HF_HUB_OFFLINE stops the startup embedding warmup from downloading model
+        # weights: the warmup catches its own failures and the app falls back to
+        # lazy loading, and neither of these scripts touches an embedding.
+        run: |
+          DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/prompt_enhancer_test \
+          HF_HUB_OFFLINE=1 \
+          nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 \
+            > /tmp/uvicorn.log 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/api/v1/health/liveness >/dev/null 2>&1; then
+              echo "API is up."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API never became reachable; uvicorn log follows." >&2
+          cat /tmp/uvicorn.log >&2
+          exit 1
+
+      - name: k6 smoke
+        # Host networking so the container reaches the uvicorn process on
+        # 127.0.0.1. Same image tag as docker-compose.loadtest.yml.
+        run: |
+          docker run --rm --network host \
+            -v "$PWD/load:/scripts:ro" \
+            -e LOAD_BASE_URL=http://127.0.0.1:8000 \
+            grafana/k6:0.54.0 run /scripts/smoke.js
+
+      - name: k6 rate limiter
+        # After smoke, never before: this spends the whole 5-per-60s login budget
+        # for this IP, and smoke.js aborts in setup() if its login is refused.
+        run: |
+          docker run --rm --network host \
+            -v "$PWD/load:/scripts:ro" \
+            -e LOAD_BASE_URL=http://127.0.0.1:8000 \
+            grafana/k6:0.54.0 run /scripts/rate-limit.js
+
+      - name: uvicorn log
+        if: failure()
+        run: cat /tmp/uvicorn.log

@@ -14,3 +14,16 @@ venv/
 .env
 .env.*
 node_modules/
+
+# Test infrastructure
+# pg_dump output from scripts/bootstrap_test_db.sh. The clone copies real user
+# emails and bcrypt hashes out of the dev database, so a dump must never be
+# committed. The script writes to /tmp inside the Postgres container; these
+# patterns exist in case anyone ever redirects it to the repo.
+*.dump
+*.sql.gz
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
