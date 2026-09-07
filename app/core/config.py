@@ -72,7 +72,6 @@ class Settings(BaseSettings):
     # before interpolation. Set to False to restore the legacy single-message
     # prompt assembly unchanged.
     prompt_injection_protection: bool = True
-    prompt_analysis_model: str = "mistral-large-latest"
     prompt_analysis_temperature: float = 0.2
     prompt_score_threshold: float = 5.0
     quality_threshold: float = 0.70

@@ -106,7 +106,7 @@ def get_prompt_builder() -> PromptBuilder:
     return PromptBuilder()
 
 def get_template_variable_extractor(
-    llm: MistralProvider = Depends(get_llm_provider),
+    llm: BaseLLMProvider = Depends(get_llm_provider),
 ) -> TemplateVariableExtractor:
     return TemplateVariableExtractor(llm_provider=llm)
 
