@@ -127,16 +127,17 @@ class MistralProvider(BaseLLMProvider):
         text = self._parse_text(data)
         return self._parse_analysis(text)
 
-    async def optimize_prompt(self, prompt: str, template_id: str, **kwargs) -> PromptOptimizationResult:
+    async def optimize_prompt(
+        self,
+        prompt: str,
+        template_id: str,
+        system: str | None = None,
+        **kwargs,
+    ) -> PromptOptimizationResult:
         logger.info("Optimizing prompt with Mistral provider using template_id=%s", template_id)
         payload = {
             "model": self.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
+            "messages": self._build_chat_messages(prompt, system),
             "max_tokens": kwargs.get("max_tokens", self.max_tokens),
             "temperature": kwargs.get("temperature", self.temperature),
         }
@@ -155,7 +156,12 @@ class MistralProvider(BaseLLMProvider):
             },
         )
 
-    async def optimize_prompt_stream(self, prompt: str, **kwargs) -> AsyncIterator[str]:
+    async def optimize_prompt_stream(
+        self,
+        prompt: str,
+        system: str | None = None,
+        **kwargs,
+    ) -> AsyncIterator[str]:
         """Stream the optimized prompt token-by-token from Mistral.
 
         Yields text deltas as they arrive. Mistral's /chat/completions endpoint
@@ -172,7 +178,7 @@ class MistralProvider(BaseLLMProvider):
         logger.info("Streaming prompt optimization with Mistral provider")
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": self._build_chat_messages(prompt, system),
             "max_tokens": kwargs.get("max_tokens", self.max_tokens),
             "temperature": kwargs.get("temperature", self.temperature),
             "stream": True,
@@ -216,6 +222,23 @@ class MistralProvider(BaseLLMProvider):
             logger.exception("Mistral provider streaming error")
             raise LLMProviderError("Unexpected Mistral provider streaming error.") from exc
 
+    def _build_chat_messages(
+        self, prompt: str, system: str | None
+    ) -> list[dict[str, str]]:
+        """Assemble the chat `messages` array.
+
+        When ``system`` is provided the trusted guardrails are sent as a real
+        ``system`` message and the (untrusted) user-derived content stays in a
+        separate ``user`` message. This structural separation is the primary
+        defense against prompt injection: instructions the end user embeds in
+        their prompt arrive as user-role data, not as system directives.
+        """
+        messages: list[dict[str, str]] = []
+        if system and system.strip():
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        return messages
+
     def _extract_delta(self, chunk: dict[str, Any]) -> str:
         choice = self._first_choice(chunk)
         if isinstance(choice, dict):
@@ -236,6 +259,8 @@ class MistralProvider(BaseLLMProvider):
             "max_tokens": kwargs.get("max_tokens", 256),
             "temperature": kwargs.get("temperature", 0.7),
         }
+        if "response_format" in kwargs:
+            payload["response_format"] = kwargs["response_format"]
         data = await self._post(payload)
         text = self._parse_text(data)
         return GenerationResult(text=text.strip(), metadata={"provider": "mistral"})

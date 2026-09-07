@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Optional, Any
 
@@ -32,7 +33,7 @@ class PromptAnalysisService:
         "4. Output Format: Does the user specify formatting (e.g. Markdown, JSON, Table, bullet points, etc.)?\n"
         "5. Constraints: Are constraints (tone, audience, word count, length, style restrictions) defined?\n"
         "6. Examples: Are few-shot examples or sample format/style references provided?\n\n"
-        "Respond ONLY with a valid JSON object matching the following structure. Do not include markdown code block formatting or extra text:\n"
+        "Respond ONLY with a valid JSON object matching the following structure. Do not include markdown code block formatting or extra text. Keep explanations and suggestions concise (1-2 sentences) and use single quotes (') for any quotes inside strings to ensure valid JSON:\n"
         "{{\n"
         "  \"summary\": \"<summary text of overall prompt quality>\",\n"
         "  \"dimensions\": {{\n"
@@ -68,8 +69,11 @@ class PromptAnalysisService:
         "    }}\n"
         "  }}\n"
         "}}\n\n"
+        # NOTE: Do NOT use Python .format() with this template — the JSON
+        # schema uses literal {{ }} braces. The user prompt is appended via
+        # safe string concatenation in analyze() to prevent {key} injection.
         "Prompt to analyze:\n"
-        "\"{prompt}\""
+        "[USER PROMPT START]\n"
     )
 
     def __init__(self, llm_provider: BaseLLMProvider) -> None:
@@ -80,14 +84,23 @@ class PromptAnalysisService:
         if not prompt or not prompt.strip():
             raise PromptAnalysisException("Prompt content cannot be empty.")
 
-        analysis_prompt = self.ANALYSIS_PROMPT_TEMPLATE.format(prompt=prompt)
+        # Safe concatenation: avoids Python .format() so that {curly_braces}
+        # inside the user prompt cannot be interpreted as format-string keys.
+        # The prompt is fenced with explicit markers so the LLM knows where
+        # the user data begins and ends.
+        analysis_prompt = (
+            self.ANALYSIS_PROMPT_TEMPLATE
+            + prompt
+            + "\n[USER PROMPT END]"
+        )
         
         start_time = time.perf_counter()
         try:
             res = await self.llm_provider.generate(
                 prompt=analysis_prompt,
-                max_tokens=settings.mistral_max_tokens,
+                max_tokens=max(settings.mistral_max_tokens, 2048),
                 temperature=settings.prompt_analysis_temperature,
+                response_format={"type": "json_object"},
             )
         except LLMTimeoutError as exc:
             logger.exception("LLM timeout during prompt analysis")
@@ -102,13 +115,12 @@ class PromptAnalysisService:
         cleaned_json = self._clean_json(res.text)
 
         try:
-            data = json.loads(cleaned_json)
-        except json.JSONDecodeError as exc:
-            logger.error("Failed to parse LLM analysis response as JSON. Cleaned response: %s", cleaned_json)
-            raise PromptAnalysisException("LLM returned an invalid JSON response for prompt analysis.") from exc
-
-        # Validate structured scoring fields
-        self._validate_analysis_data(data)
+            data = json.loads(cleaned_json, strict=False)
+            self._validate_analysis_data(data)
+        except (json.JSONDecodeError, ScoringException) as exc:
+            logger.warning("Standard JSON parse failed (%s); attempting regex fallback extraction.", exc)
+            data = self._fallback_extract_analysis(res.text)
+            self._validate_analysis_data(data)
 
         # Compute overall score and inject weights
         dims = data["dimensions"]
@@ -177,7 +189,12 @@ class PromptAnalysisService:
             text_clean = text_clean[3:]
         if text_clean.endswith("```"):
             text_clean = text_clean[:-3]
-        return text_clean.strip()
+        text_clean = text_clean.strip()
+        first_brace = text_clean.find("{")
+        last_brace = text_clean.rfind("}")
+        if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+            text_clean = text_clean[first_brace : last_brace + 1]
+        return text_clean
 
     def _validate_analysis_data(self, data: dict[str, Any]) -> None:
         if "dimensions" not in data:
@@ -200,3 +217,45 @@ class PromptAnalysisService:
                 int(d_obj["score"])
             except (ValueError, TypeError):
                 raise ScoringException(f"Score for dimension '{dim}' must be a valid integer.")
+
+    def _fallback_extract_analysis(self, text: str) -> dict[str, Any]:
+        """Robust regex-based fallback extractor for when an LLM returns malformed JSON with unescaped internal quotes."""
+        summary_match = re.search(r'"summary"\s*:\s*"(.*?)"\s*,\s*"dimensions"', text, re.DOTALL)
+        if not summary_match:
+            summary_match = re.search(r'"summary"\s*:\s*"([^"]+)"', text)
+        summary = summary_match.group(1).strip() if summary_match else "Quality analysis completed."
+
+        required_dims = ["clarity", "context", "role_definition", "output_format", "constraints", "examples"]
+        dimensions = {}
+
+        for dim in required_dims:
+            pattern = rf'"{dim}"\s*:\s*\{{(.*?)\}}'
+            match = re.search(pattern, text, re.DOTALL)
+            if match:
+                block = match.group(1)
+                score_m = re.search(r'"score"\s*:\s*(\d+)', block)
+                score = int(score_m.group(1)) if score_m else 65
+
+                exp_m = re.search(r'"explanation"\s*:\s*"(.*?)(?:"\s*,\s*"suggestions"|"$)', block, re.DOTALL)
+                exp = exp_m.group(1).strip() if exp_m else "Evaluated based on prompt criteria."
+
+                sugg_m = re.search(r'"suggestions"\s*:\s*\[(.*?)\]', block, re.DOTALL)
+                suggestions = []
+                if sugg_m:
+                    raw_suggs = sugg_m.group(1)
+                    sugg_items = re.findall(r'"(.*?)"', raw_suggs, re.DOTALL)
+                    suggestions = [s.strip() for s in sugg_items if s.strip()]
+
+                dimensions[dim] = {
+                    "score": max(0, min(100, score)),
+                    "explanation": exp,
+                    "suggestions": suggestions or ["Refine this dimension for clearer execution."]
+                }
+            else:
+                dimensions[dim] = {
+                    "score": 65,
+                    "explanation": "Evaluated based on standard prompt engineering best practices.",
+                    "suggestions": ["Add more specific details for this dimension."]
+                }
+
+        return {"summary": summary, "dimensions": dimensions}

@@ -21,6 +21,7 @@ from app.services.template_retrieval_service import TemplateRetrievalService
 from app.services.template_renderer import TemplateRenderer
 from app.services.prompt_builder import PromptBuilder
 from app.services.prompt_sanitizer import neutralize_delimiters, sanitize_variables
+from app.services.template_variable_extractor import TemplateVariableExtractor
 
 logger = logging.getLogger("promptiq.prompt_enhancement")
 
@@ -38,11 +39,13 @@ class PromptEnhancementService:
         retrieval_service: TemplateRetrievalService,
         template_renderer: Optional[TemplateRenderer] = None,
         prompt_builder: Optional[PromptBuilder] = None,
+        variable_extractor: Optional[TemplateVariableExtractor] = None,
     ) -> None:
         self.llm_provider = llm_provider
         self.retrieval_service = retrieval_service
         self.template_renderer = template_renderer or TemplateRenderer()
         self.prompt_builder = prompt_builder or PromptBuilder()
+        self.variable_extractor = variable_extractor or TemplateVariableExtractor(llm_provider=self.llm_provider)
 
     async def enhance_prompt(
         self,
@@ -92,12 +95,21 @@ class PromptEnhancementService:
         template_id = selected_temp["id"]
         template_body = selected_temp["body"]
 
+        # STEP 2.5: Dynamically infer / extract template variables from the user prompt
+        extracted_vars = await self.variable_extractor.extract_variables(
+            prompt=prompt,
+            template_body=template_body,
+            user_variables=variables,
+        )
+        effective_vars = {**extracted_vars, **(variables or {})}
+        effective_vars.setdefault("REQUEST", prompt)
+
         # STEP 3: Render placeholders inside the template body
         try:
             rendered_template = self.template_renderer.render(
                 template_body=template_body,
                 user_prompt=prompt,
-                variables=variables,
+                variables=effective_vars,
             )
         except TemplateRenderException as exc:
             logger.exception("Template rendering failed")
@@ -167,6 +179,7 @@ class PromptEnhancementService:
                     "template_id": template_id,
                     "template_title": selected_temp["title"],
                     "similarity_score": similarity_score,
+                    "variables": effective_vars,
                 }
 
             except LLMTimeoutError as exc:
@@ -241,12 +254,21 @@ class PromptEnhancementService:
         template_id = selected_temp["id"]
         template_body = selected_temp["body"]
 
+        # STEP 2.5: Dynamically infer / extract template variables from the user prompt
+        extracted_vars = await self.variable_extractor.extract_variables(
+            prompt=prompt,
+            template_body=template_body,
+            user_variables=variables,
+        )
+        effective_vars = {**extracted_vars, **(variables or {})}
+        effective_vars.setdefault("REQUEST", prompt)
+
         # STEP 3: Render placeholders inside the template body
         try:
             rendered_template = self.template_renderer.render(
                 template_body=template_body,
                 user_prompt=prompt,
-                variables=variables,
+                variables=effective_vars,
             )
         except TemplateRenderException as exc:
             logger.exception("Template rendering failed")
@@ -273,6 +295,7 @@ class PromptEnhancementService:
             "template_id": template_id,
             "template_title": selected_temp["title"],
             "similarity_score": similarity_score,
+            "variables": effective_vars,
         }
 
         # STEP 5: Stream tokens, accumulating raw text for post-processing.
@@ -310,6 +333,7 @@ class PromptEnhancementService:
             "template_id": template_id,
             "template_title": selected_temp["title"],
             "similarity_score": similarity_score,
+            "variables": effective_vars,
         }
 
     async def _backoff_sleep(self, attempt: int) -> None:

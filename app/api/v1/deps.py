@@ -87,6 +87,7 @@ from app.services.embedding_service import EmbeddingService
 from app.services.ranking_service import RankingService
 from app.services.template_renderer import TemplateRenderer
 from app.services.prompt_builder import PromptBuilder
+from app.services.template_variable_extractor import TemplateVariableExtractor
 
 def get_llm_provider() -> MistralProvider:
     return MistralProvider()
@@ -102,6 +103,11 @@ def get_template_renderer() -> TemplateRenderer:
 
 def get_prompt_builder() -> PromptBuilder:
     return PromptBuilder()
+
+def get_template_variable_extractor(
+    llm: MistralProvider = Depends(get_llm_provider),
+) -> TemplateVariableExtractor:
+    return TemplateVariableExtractor(llm_provider=llm)
 
 # Core Orchestration and Business Services
 from app.services.template_retrieval_service import TemplateRetrievalService
@@ -164,8 +170,15 @@ def get_prompt_enhancement_service(
     retrieval: TemplateRetrievalService = Depends(get_template_retrieval_service),
     renderer: TemplateRenderer = Depends(get_template_renderer),
     builder: PromptBuilder = Depends(get_prompt_builder),
+    variable_extractor: TemplateVariableExtractor = Depends(get_template_variable_extractor),
 ) -> PromptEnhancementService:
-    return PromptEnhancementService(llm_provider=llm, retrieval_service=retrieval, template_renderer=renderer, prompt_builder=builder)
+    return PromptEnhancementService(
+        llm_provider=llm,
+        retrieval_service=retrieval,
+        template_renderer=renderer,
+        prompt_builder=builder,
+        variable_extractor=variable_extractor,
+    )
 
 def get_prompt_analysis_service(
     llm: MistralProvider = Depends(get_llm_provider),
