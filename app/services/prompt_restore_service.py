@@ -38,12 +38,16 @@ class PromptRestoreService:
         if prompt is None:
             raise PromptNotFoundError("Prompt not found.")
 
-        if prompt.current_version_id is not None and str(prompt.current_version_id) == version_id:
-            raise ActiveVersionDeletionError("Cannot restore the active version.")
-
         version = await self.prompt_version_repository.get_by_id(session, version_id)
         if version is None or str(version.prompt_id) != prompt_id:
             raise VersionNotFoundError("Version not found for prompt.")
+
+        if prompt.current_version_id is not None and str(prompt.current_version_id) == version_id:
+            logger.info("Prompt id=%s is already at version_id=%s, returning idempotently", prompt_id, version_id)
+            return {
+                "prompt_id": prompt_id,
+                "restored_version_id": version_id,
+            }
 
         try:
             prompt.current_version_id = version.id
