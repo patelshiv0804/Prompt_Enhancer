@@ -30,13 +30,16 @@ async def get_current_user(
     two auth dependencies (this and ``get_current_user_id``) resolve to the same
     identity in every scenario.
     """
-    token = None
+    tokens_to_try = []
     if authorization and authorization.startswith("Bearer "):
-        token = authorization.split(" ")[1]
-    else:
-        token = request.cookies.get(settings.access_cookie_name)
+        bearer = authorization.split(" ")[1].strip()
+        if bearer and bearer.lower() not in ("null", "undefined"):
+            tokens_to_try.append(bearer)
+    cookie_token = request.cookies.get(settings.access_cookie_name)
+    if cookie_token and cookie_token.strip() and cookie_token.strip().lower() not in ("null", "undefined") and cookie_token not in tokens_to_try:
+        tokens_to_try.append(cookie_token.strip())
 
-    if token:
+    for token in tokens_to_try:
         try:
             payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
             user_id = payload.get("sub")
@@ -48,7 +51,7 @@ async def get_current_user(
                 if user:
                     return user.email
         except (JWTError, ValueError):
-            pass
+            continue
 
     if settings.enable_dev_auth_bypass:
         from uuid import UUID

@@ -294,7 +294,8 @@ async def incr_fixed_window(key: str, window_seconds: int) -> Optional[int]:
         return None
     try:
         count = await client.incr(key)
-        if count == 1:
+        ttl = await client.ttl(key)
+        if ttl <= 0:
             await client.expire(key, max(1, int(window_seconds)))
         _record_success()
         return int(count)

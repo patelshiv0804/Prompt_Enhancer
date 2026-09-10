@@ -124,18 +124,21 @@ async def get_current_user_id(
     or, failing that, from the httpOnly auth cookie set at login.
     Used by all authenticated endpoints.
     """
-    # Fall back to the httpOnly cookie when no Authorization header is present.
-    if not token:
-        token = request.cookies.get(settings.access_cookie_name)
+    tokens_to_try = []
+    if token and token.strip() and token.strip().lower() not in ("null", "undefined"):
+        tokens_to_try.append(token.strip())
+    cookie_token = request.cookies.get(settings.access_cookie_name)
+    if cookie_token and cookie_token.strip() and cookie_token.strip().lower() not in ("null", "undefined") and cookie_token not in tokens_to_try:
+        tokens_to_try.append(cookie_token.strip())
 
-    if token:
+    for candidate in tokens_to_try:
         try:
-            payload = decode_access_token(token)
+            payload = decode_access_token(candidate)
             user_id: str = payload.get("sub")
             if user_id:
                 return UUID(user_id)
         except Exception:
-            pass
+            continue
 
     if settings.enable_dev_auth_bypass:
         return UUID("899fd613-4e56-4921-b8f6-7fc1bf85fead")
