@@ -42,7 +42,7 @@ services:
     container_name: promptiq-web
     # NOTE: --reload and the ".:/app" bind-mount below are for local development
     # only. Production should drop both (use a baked image, no --reload) — VULN-016.
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app
     ports:
       - "8000:8000"
     environment:

@@ -26,6 +26,12 @@ from app.services.template_variable_extractor import TemplateVariableExtractor
 logger = logging.getLogger("promptiq.prompt_enhancement")
 
 
+# Roles that trigger the Adaptive Meta-Prompt Engine (AMPE) path.
+# When the user selects "General" or sends no role, we skip template DB
+# lookup + variable extraction and let the LLM infer the domain itself.
+_GENERAL_ROLES: frozenset[str] = frozenset({"general", "auto", ""})
+
+
 class PromptEnhancementService:
     """
     PromptEnhancementService orchestrates the full prompt enhancement flow:
@@ -75,6 +81,11 @@ class PromptEnhancementService:
         # STEP 2: Retrieve a template for a new enhancement, or use the
         # persisted template for re-enhancement. The latter must not trigger
         # semantic retrieval/embedding generation again.
+        #
+        # AMPE shortcut: when role is 'general'/'auto'/absent, skip template
+        # retrieval entirely — the adaptive path doesn't need a DB template.
+        _use_adaptive_early = (role or "").strip().lower() in _GENERAL_ROLES
+
         if template_override is not None:
             selected_temp = {
                 "id": str(template_override.id),
@@ -82,6 +93,11 @@ class PromptEnhancementService:
                 "body": template_override.body,
             }
             similarity_score = 1.0
+            _use_adaptive_early = False  # explicit template override always uses template path
+        elif _use_adaptive_early:
+            # AMPE path: no DB lookup needed.
+            selected_temp = {"id": "adaptive", "title": "Adaptive Enhancement", "body": ""}
+            similarity_score = 0.0
         else:
             retrieval_res = await self.retrieval_service.retrieve_best_template(
                 session=session,
@@ -95,28 +111,45 @@ class PromptEnhancementService:
         template_id = selected_temp["id"]
         template_body = selected_temp["body"]
 
-        # STEP 2.5: Dynamically infer / extract template variables from the user prompt
-        extracted_vars = await self.variable_extractor.extract_variables(
-            prompt=prompt,
-            template_body=template_body,
-            user_variables=variables,
-        )
-        effective_vars = {**extracted_vars, **(variables or {})}
-        effective_vars.setdefault("REQUEST", prompt)
+        # ── DUAL-PATH ROUTING ────────────────────────────────────────────────────
+        # AMPE path  : role is 'general'/'auto'/absent → skip DB template,
+        #              variable extraction, and rendering. LLM infers domain.
+        # Template path: specific role provided → existing flow unchanged.
+        use_adaptive = (role or "").strip().lower() in _GENERAL_ROLES
 
-        # STEP 3: Render placeholders inside the template body
-        try:
-            rendered_template = self.template_renderer.render(
-                template_body=template_body,
-                user_prompt=prompt,
-                variables=effective_vars,
+        if use_adaptive:
+            logger.info("AMPE path selected (role=%r). Skipping variable extraction.", role)
+            effective_vars: dict = {"REQUEST": prompt}
+            messages_for_build: Optional[dict] = self.prompt_builder.build_adaptive_messages(
+                raw_prompt=prompt,
+                enhancement_level=enhancement_level,
+                role=role,
             )
-        except TemplateRenderException as exc:
-            logger.exception("Template rendering failed")
-            raise exc
-        except Exception as exc:
-            logger.exception("Unexpected rendering error")
-            raise TemplateRenderException("Unexpected error during template variable rendering.") from exc
+        else:
+            # STEP 2.5: Dynamically infer / extract template variables from the user prompt
+            extracted_vars = await self.variable_extractor.extract_variables(
+                prompt=prompt,
+                template_body=template_body,
+                user_variables=variables,
+            )
+            effective_vars = {**extracted_vars, **(variables or {})}
+            effective_vars.setdefault("REQUEST", prompt)
+
+            # STEP 3: Render placeholders inside the template body
+            try:
+                rendered_template = self.template_renderer.render(
+                    template_body=template_body,
+                    user_prompt=prompt,
+                    variables=effective_vars,
+                )
+            except TemplateRenderException as exc:
+                logger.exception("Template rendering failed")
+                raise exc
+            except Exception as exc:
+                logger.exception("Unexpected rendering error")
+                raise TemplateRenderException("Unexpected error during template variable rendering.") from exc
+
+            messages_for_build = None  # built inside the retry loop for template path
 
         # STEP 4 & 5: Build final prompt and call LLM with retry strategy
         max_retries = settings.max_retries
@@ -125,18 +158,22 @@ class PromptEnhancementService:
 
         while current_try <= max_retries:
             try:
-                # Use build_messages() so system guardrails are sent as a
-                # real system-role message and all user-derived content
-                # (role, mode, template, raw prompt) stays in the user message.
-                # This system/user separation is the primary injection defense.
-                messages = self.prompt_builder.build_messages(
-                    role=role,
-                    mode=mode,
-                    rendered_template=rendered_template,
-                    system_instructions=strong_sys_instructions,
-                    style_attributes=style_attributes,
-                    enhancement_level=enhancement_level,
-                )
+                if use_adaptive:
+                    # AMPE path: already built above; rebuild only when retrying
+                    # with stronger instructions (strong_sys_instructions is not
+                    # used on this path, so the pre-built dict is reused as-is).
+                    messages = messages_for_build  # type: ignore[assignment]
+                else:
+                    # Template path: rebuild on every retry so we can inject the
+                    # stronger system instructions on subsequent attempts.
+                    messages = self.prompt_builder.build_messages(
+                        role=role,
+                        mode=mode,
+                        rendered_template=rendered_template,
+                        system_instructions=strong_sys_instructions,
+                        style_attributes=style_attributes,
+                        enhancement_level=enhancement_level,
+                    )
 
                 logger.info(
                     "Calling LLM provider. System size: %d chars, user size: %d chars",
@@ -234,6 +271,9 @@ class PromptEnhancementService:
         variables = sanitize_variables(variables)
 
         # STEP 2: Template selection (explicit override or semantic retrieval)
+        # AMPE shortcut: skip DB lookup when role is 'general'/'auto'/absent.
+        _use_adaptive_stream = (role or "").strip().lower() in _GENERAL_ROLES
+
         if template_override is not None:
             selected_temp = {
                 "id": str(template_override.id),
@@ -241,6 +281,10 @@ class PromptEnhancementService:
                 "body": template_override.body,
             }
             similarity_score = 1.0
+            _use_adaptive_stream = False  # template override always uses template path
+        elif _use_adaptive_stream:
+            selected_temp = {"id": "adaptive", "title": "Adaptive Enhancement", "body": ""}
+            similarity_score = 0.0
         else:
             retrieval_res = await self.retrieval_service.retrieve_best_template(
                 session=session,
@@ -254,39 +298,49 @@ class PromptEnhancementService:
         template_id = selected_temp["id"]
         template_body = selected_temp["body"]
 
-        # STEP 2.5: Dynamically infer / extract template variables from the user prompt
-        extracted_vars = await self.variable_extractor.extract_variables(
-            prompt=prompt,
-            template_body=template_body,
-            user_variables=variables,
-        )
-        effective_vars = {**extracted_vars, **(variables or {})}
-        effective_vars.setdefault("REQUEST", prompt)
-
-        # STEP 3: Render placeholders inside the template body
-        try:
-            rendered_template = self.template_renderer.render(
-                template_body=template_body,
-                user_prompt=prompt,
-                variables=effective_vars,
+        # ── DUAL-PATH ROUTING (stream) ────────────────────────────────────────
+        if _use_adaptive_stream:
+            logger.info("AMPE stream path selected (role=%r). Skipping variable extraction.", role)
+            effective_vars: dict = {"REQUEST": prompt}
+            messages = self.prompt_builder.build_adaptive_messages(
+                raw_prompt=prompt,
+                enhancement_level=enhancement_level,
+                role=role,
             )
-        except TemplateRenderException as exc:
-            logger.exception("Template rendering failed")
-            raise exc
-        except Exception as exc:
-            logger.exception("Unexpected rendering error")
-            raise TemplateRenderException("Unexpected error during template variable rendering.") from exc
+        else:
+            # STEP 2.5: Dynamically infer / extract template variables from the user prompt
+            extracted_vars = await self.variable_extractor.extract_variables(
+                prompt=prompt,
+                template_body=template_body,
+                user_variables=variables,
+            )
+            effective_vars = {**extracted_vars, **(variables or {})}
+            effective_vars.setdefault("REQUEST", prompt)
 
-        # STEP 4: Build system/user messages. Single attempt — streaming cannot
-        # transparently retry once bytes have been sent to the client.
-        messages = self.prompt_builder.build_messages(
-            role=role,
-            mode=mode,
-            rendered_template=rendered_template,
-            system_instructions=None,
-            style_attributes=style_attributes,
-            enhancement_level=enhancement_level,
-        )
+            # STEP 3: Render placeholders inside the template body
+            try:
+                rendered_template = self.template_renderer.render(
+                    template_body=template_body,
+                    user_prompt=prompt,
+                    variables=effective_vars,
+                )
+            except TemplateRenderException as exc:
+                logger.exception("Template rendering failed")
+                raise exc
+            except Exception as exc:
+                logger.exception("Unexpected rendering error")
+                raise TemplateRenderException("Unexpected error during template variable rendering.") from exc
+
+            # STEP 4: Build system/user messages. Single attempt — streaming cannot
+            # transparently retry once bytes have been sent to the client.
+            messages = self.prompt_builder.build_messages(
+                role=role,
+                mode=mode,
+                rendered_template=rendered_template,
+                system_instructions=None,
+                style_attributes=style_attributes,
+                enhancement_level=enhancement_level,
+            )
 
         # Emit template metadata up front so the client can render context
         # (template name, similarity) before the first token arrives.

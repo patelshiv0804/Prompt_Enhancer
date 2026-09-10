@@ -341,6 +341,11 @@ async def enhance_prompt(
         enhanced_text = enhance_res["enhanced_prompt"]
 
         # 2. Persist initial record in PostgreSQL immediately
+        display_title = (
+            f"{effective_role} - {effective_mode}"
+            if (effective_role or effective_mode)
+            else "Adaptive Enhancement"
+        )
         prompt_record = await persistence_service.create_prompt_with_version(
             session=session,
             user_id=str(profile.id),
@@ -350,7 +355,7 @@ async def enhance_prompt(
             old_analysis=None,
             new_analysis=None,
             grade=None,
-            title=f"{effective_role} - {effective_mode}",
+            title=display_title,
             tool_recommendations=None,
         )
         await session.commit()
@@ -509,6 +514,11 @@ async def enhance_prompt_stream(
             # The request-scoped session stays open until this generator is
             # exhausted, so the commit here (and the dependency's own trailing
             # commit) both operate on a live session.
+            display_title = (
+                f"{effective_role} - {effective_mode}"
+                if (effective_role or effective_mode)
+                else "Adaptive Enhancement"
+            )
             prompt_record = await persistence_service.create_prompt_with_version(
                 session=session,
                 user_id=str(profile.id),
@@ -518,7 +528,7 @@ async def enhance_prompt_stream(
                 old_analysis=None,
                 new_analysis=None,
                 grade=None,
-                title=f"{effective_role} - {effective_mode}",
+                title=display_title,
                 tool_recommendations=None,
             )
             await session.commit()

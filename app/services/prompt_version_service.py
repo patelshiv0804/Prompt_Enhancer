@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Optional
+from typing import Optional, Any
+from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -19,6 +20,17 @@ from app.services.exceptions import (
 from app.services.prompt_embedding_service import PromptEmbeddingService
 
 logger = logging.getLogger("promptiq.prompt_version")
+
+
+def _to_uuid(val: Any) -> Optional[UUID]:
+    if not val:
+        return None
+    if isinstance(val, UUID):
+        return val
+    try:
+        return UUID(str(val))
+    except (ValueError, TypeError, AttributeError):
+        return None
 
 
 class PromptVersionService:
@@ -73,7 +85,7 @@ class PromptVersionService:
             old_analysis=old_analysis,
             new_analysis=new_analysis,
             tool_recommendations=tool_recommendations,
-            template_id=template_id,
+            template_id=_to_uuid(template_id),
         )
 
         version_id = version.id

@@ -91,11 +91,20 @@ class TemplateRetrievalService:
         # role_was_explicit = True means the user deliberately chose a valid DB role/mode.
         # When BOTH are explicit, the similarity threshold check is skipped — we just return
         # the best available template in that category without second-guessing the user's choice.
+        #
+        # NOTE: "general" and "auto" are NEVER treated as explicit even if they appear in the DB.
+        # They signal "let the system decide" — forcing a similarity bypass would reproduce the
+        # original hallucination bug where the Universal General Template was always selected.
+        _NON_EXPLICIT_ROLES: frozenset[str] = frozenset({"general", "auto", ""})
         inferred_mode: None | str = None  # may be set by intent analysis below, reused for mode block
         role_was_explicit = False
         mode_was_explicit = False
 
-        exact_role = _find_exact_match(role, distinct_roles) if (role and role.strip()) else None
+        role_is_explicit_candidate = (
+            bool(role and role.strip())
+            and role.strip().lower() not in _NON_EXPLICIT_ROLES
+        )
+        exact_role = _find_exact_match(role, distinct_roles) if role_is_explicit_candidate else None
 
         if exact_role:
             # ✅ Exact match — user-selected value is valid, use it directly.

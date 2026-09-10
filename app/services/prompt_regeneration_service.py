@@ -59,16 +59,14 @@ class PromptRegenerationService:
         if not prompt.current_version_id:
             raise PromptVersionException("Prompt has no active version.")
 
-        # Validate Prompt has a template
-        if not prompt.template_id:
-            raise PromptVersionException("Prompt has no template.")
-
-        # Load Template Used
-        template = prompt.template
-        if not template:
-            template = await self.template_repository.get_by_id(session, str(prompt.template_id))
-        if not template:
-            raise PromptVersionException("Prompt template not found.")
+        # Load Template Used (if any)
+        template = None
+        if prompt.template_id:
+            template = prompt.template
+            if not template:
+                template = await self.template_repository.get_by_id(session, str(prompt.template_id))
+            if not template:
+                raise PromptVersionException("Prompt template not found.")
 
         # 3. Apply User Feedback
         merged_prompt = prompt.original_prompt
@@ -94,9 +92,10 @@ class PromptRegenerationService:
         try:
             enhance_res = await self.enhancement_service.enhance_prompt(
                 session=session,
-                role=template.role,
-                mode=template.mode,
+                role=template.role if template else None,
+                mode=template.mode if template else None,
                 prompt=merged_prompt,
+                template_override=template,
             )
         except Exception as exc:
             logger.exception("Prompt enhancement failed during regeneration")
@@ -121,6 +120,7 @@ class PromptRegenerationService:
                 content=enhanced_prompt,
                 version_type="REGENERATION",
                 change_summary=f"Prompt regenerated using feedback: {feedback}" if feedback else "Prompt regenerated using the same template.",
+                template_id=prompt.template_id,
             )
             await session.flush()
 

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Optional, Any
+from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Prompt
@@ -15,6 +16,17 @@ from app.services.exceptions import (
 )
 
 logger = logging.getLogger("promptiq.prompt_persistence")
+
+
+def _to_uuid(val: Any) -> Optional[UUID]:
+    if not val:
+        return None
+    if isinstance(val, UUID):
+        return val
+    try:
+        return UUID(str(val))
+    except (ValueError, TypeError, AttributeError):
+        return None
 
 
 class PromptPersistenceService:
@@ -50,11 +62,14 @@ class PromptPersistenceService:
         logger.info("Creating new prompt in database")
         try:
             # We wrap everything in a transaction rollback catch block
+            clean_template_id = _to_uuid(template_id)
+            clean_ai_model_id = _to_uuid(ai_model_id)
+            clean_user_id = _to_uuid(user_id) or user_id
             prompt = Prompt(
-                user_id=user_id,
+                user_id=clean_user_id,
                 original_prompt=original_prompt,
-                template_id=template_id,
-                ai_model_id=ai_model_id,
+                template_id=clean_template_id,
+                ai_model_id=clean_ai_model_id,
                 title=title,
                 old_analysis=old_analysis,
                 new_analysis=new_analysis,
@@ -74,7 +89,7 @@ class PromptPersistenceService:
                 old_analysis=old_analysis,
                 new_analysis=new_analysis,
                 tool_recommendations=tool_recommendations,
-                template_id=template_id,
+                template_id=clean_template_id,
             )
 
             # Generate and save prompt embedding

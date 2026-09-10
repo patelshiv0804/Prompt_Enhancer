@@ -73,19 +73,16 @@ class PromptReenhanceService:
         if not prompt.current_version_id:
             raise PromptVersionException("Prompt has no active version to re-enhance.")
 
-        if not prompt.template_id:
-            raise PromptVersionException(
-                "Prompt has no linked template. Re-enhance requires the original template."
-            )
-
-        # ── 2. Load template ──────────────────────────────────────────────────
-        template = prompt.template
-        if not template:
-            template = await self.template_repository.get_by_id(session, str(prompt.template_id))
-        if not template:
-            raise PromptVersionException(
-                f"Template {prompt.template_id} not found. Cannot re-enhance."
-            )
+        # ── 2. Load template (if linked) ──────────────────────────────────────
+        template = None
+        if prompt.template_id:
+            template = prompt.template
+            if not template:
+                template = await self.template_repository.get_by_id(session, str(prompt.template_id))
+            if not template:
+                raise PromptVersionException(
+                    f"Template {prompt.template_id} not found. Cannot re-enhance."
+                )
 
         # ── 3. Get the latest version's content as the INPUT to re-enhance ───
         latest_version = await self.prompt_version_repository.get_latest_version(
@@ -125,8 +122,8 @@ class PromptReenhanceService:
         try:
             enhance_res = await self.enhancement_service.enhance_prompt(
                 session=session,
-                role=template.role,
-                mode=template.mode,
+                role=template.role if template else None,
+                mode=template.mode if template else None,
                 prompt=input_text,
                 template_override=template,
             )
@@ -166,8 +163,8 @@ class PromptReenhanceService:
             try:
                 tool_rec = await self.tool_recommendation_service.recommend(
                     prompt=input_text,
-                    mode=template.mode,
-                    role=template.role,
+                    mode=template.mode if template else None,
+                    role=template.role if template else None,
                 )
             except Exception:
                 logger.warning("Tool recommendation failed during re-enhancement — using fallback")
@@ -196,7 +193,7 @@ class PromptReenhanceService:
                 old_analysis=old_analysis,
                 new_analysis=new_analysis,
                 tool_recommendations=tool_rec_dict,
-                template_id=str(prompt.template_id),
+                template_id=prompt.template_id,
             )
             await session.flush()
 
@@ -238,7 +235,7 @@ class PromptReenhanceService:
             prompt_id,
             latest_version.version_number,
             new_version.version_number,
-            template.title,
+            template.title if template else "Adaptive",
             llm_time,
             emb_time,
             total_time,
@@ -253,7 +250,7 @@ class PromptReenhanceService:
                 "version_id": str(new_version.id),
                 "version_number": new_version.version_number,
                 "enhanced_prompt": enhanced_text,
-                "template_id": str(prompt.template_id),
+                "template_id": str(prompt.template_id) if prompt.template_id else "adaptive",
                 "old_analysis": old_analysis,
                 "new_analysis": new_analysis,
                 "tool_recommendations": tool_rec_dict,
@@ -292,19 +289,17 @@ class PromptReenhanceService:
             raise PromptNotFoundError(f"Prompt {prompt_id} not found or deleted.")
         if not prompt.current_version_id:
             raise PromptVersionException("Prompt has no active version to re-enhance.")
-        if not prompt.template_id:
-            raise PromptVersionException(
-                "Prompt has no linked template. Re-enhance requires the original template."
-            )
 
-        # ── 2. Load template ──────────────────────────────────────────────────
-        template = prompt.template
-        if not template:
-            template = await self.template_repository.get_by_id(session, str(prompt.template_id))
-        if not template:
-            raise PromptVersionException(
-                f"Template {prompt.template_id} not found. Cannot re-enhance."
-            )
+        # ── 2. Load template (if linked) ──────────────────────────────────────
+        template = None
+        if prompt.template_id:
+            template = prompt.template
+            if not template:
+                template = await self.template_repository.get_by_id(session, str(prompt.template_id))
+            if not template:
+                raise PromptVersionException(
+                    f"Template {prompt.template_id} not found. Cannot re-enhance."
+                )
 
         # ── 3. Latest version's content is the INPUT to re-enhance ────────────
         latest_version = await self.prompt_version_repository.get_latest_version(
@@ -335,8 +330,8 @@ class PromptReenhanceService:
         try:
             async for ev in self.enhancement_service.enhance_prompt_stream(
                 session=session,
-                role=template.role,
-                mode=template.mode,
+                role=template.role if template else None,
+                mode=template.mode if template else None,
                 prompt=input_text,
                 template_override=template,
             ):
@@ -405,7 +400,7 @@ class PromptReenhanceService:
                 old_analysis=old_analysis,
                 new_analysis=new_analysis,
                 tool_recommendations=tool_rec_dict,
-                template_id=str(prompt.template_id),
+                template_id=prompt.template_id,
             )
             await session.flush()
 
@@ -443,7 +438,7 @@ class PromptReenhanceService:
             prompt_id,
             latest_version.version_number,
             new_version.version_number,
-            template.title,
+            template.title if template else "Adaptive",
             llm_time,
             emb_time,
             total_time,
@@ -457,7 +452,7 @@ class PromptReenhanceService:
                 "version_id": str(new_version.id),
                 "version_number": new_version.version_number,
                 "enhanced_prompt": enhanced_text,
-                "template_id": str(prompt.template_id),
+                "template_id": str(prompt.template_id) if prompt.template_id else "adaptive",
                 "old_analysis": old_analysis,
                 "new_analysis": new_analysis,
                 "tool_recommendations": tool_rec_dict,
