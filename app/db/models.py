@@ -189,6 +189,13 @@ class Prompt(SQLModel, table=True):
         default=None,
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("ai_models.id", ondelete="SET NULL"), nullable=True),
     )
+    # Destination AI model the enhanced prompt was formatted for (e.g. "Claude",
+    # "ChatGPT", "Midjourney"). Free-form label mirroring the target_model the
+    # user picked in the UI; drives history display and re-enhance recovery.
+    target_model: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(length=100), nullable=True),
+    )
     title: Optional[str] = Field(default=None, sa_column=Column(String(length=255), nullable=True))
     original_prompt: str = Field(sa_column=Column(Text, nullable=False))
     current_version_id: Optional[UUID] = Field(

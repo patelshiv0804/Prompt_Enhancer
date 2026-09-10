@@ -250,3 +250,70 @@ def test_the_builder_holds_no_per_call_state() -> None:
     )
 
     assert shared.build_final_prompt(role="a", mode="b", rendered_template="C") == first
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Target Model Directives (Multi-Model Prompt Engineering)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_target_model_deepseek_directive_injected(builder: PromptBuilder) -> None:
+    msgs = builder.build_messages(
+        role="developer",
+        mode="backend",
+        rendered_template="API Spec",
+        target_model="DeepSeek",
+    )
+    assert "DEEPSEEK-R1" in msgs["system"]
+    assert "<context>" in msgs["system"]
+    assert "think step by step" in msgs["system"]
+
+
+def test_target_model_perplexity_directive_injected(builder: PromptBuilder) -> None:
+    msgs = builder.build_messages(
+        role="researcher",
+        mode="academic",
+        rendered_template="Literature Review",
+        target_model="Perplexity",
+    )
+    assert "PERPLEXITY AI" in msgs["system"]
+    assert "Search Directives" in msgs["system"]
+
+
+def test_target_model_higgsfield_directive_injected(builder: PromptBuilder) -> None:
+    msgs = builder.build_messages(
+        role="creator",
+        mode="cinematic",
+        rendered_template="Astronaut on Mars",
+        target_model="Higgsfield",
+    )
+    assert "HIGGSFIELD AI" in msgs["system"]
+    assert "4-Layer Cinematic Video Direction Architecture" in msgs["system"]
+
+
+def test_target_model_none_injects_no_directive(builder: PromptBuilder) -> None:
+    msgs_none = builder.build_messages(
+        role="marketer",
+        mode="strategy",
+        rendered_template="Campaign",
+        target_model="None",
+    )
+    assert "TARGET AI MODEL RULES" not in msgs_none["system"]
+
+    msgs_null = builder.build_messages(
+        role="marketer",
+        mode="strategy",
+        rendered_template="Campaign",
+        target_model=None,
+    )
+    assert "TARGET AI MODEL RULES" not in msgs_null["system"]
+
+
+def test_adaptive_messages_with_target_model(builder: PromptBuilder) -> None:
+    msgs = builder.build_adaptive_messages(
+        raw_prompt="Camera dolly in on Mars base",
+        target_model="Higgsfield",
+    )
+    assert "HIGGSFIELD AI" in msgs["system"]
+    assert "4-Layer Cinematic Video Direction Architecture" in msgs["system"]
+    assert "Camera dolly in on Mars base" in msgs["user"]

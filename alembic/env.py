@@ -1,6 +1,10 @@
 import asyncio
 import os
+import sys
 from logging.config import fileConfig
+
+# Add project root to sys.path so 'app' can be imported when running alembic from anywhere
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config, create_async_engine

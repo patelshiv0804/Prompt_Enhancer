@@ -84,6 +84,7 @@ class PromptSearchService:
                 "old_analysis": prompt.old_analysis,
                 "new_analysis": prompt.new_analysis,
                 "grade": prompt.grade,
+                "target_model": prompt.target_model,
                 "created_at": prompt.created_at,
             })
         return output

@@ -63,6 +63,7 @@ class PromptEnhancementService:
         style_attributes: Optional[dict[str, Any]] = None,
         template_override: Optional[Any] = None,
         enhancement_level: str = "standard",
+        target_model: Optional[str] = None,
     ) -> dict:
         logger.info("Starting prompt enhancement request")
         
@@ -124,6 +125,7 @@ class PromptEnhancementService:
                 raw_prompt=prompt,
                 enhancement_level=enhancement_level,
                 role=role,
+                target_model=target_model,
             )
         else:
             # STEP 2.5: Dynamically infer / extract template variables from the user prompt
@@ -173,6 +175,7 @@ class PromptEnhancementService:
                         system_instructions=strong_sys_instructions,
                         style_attributes=style_attributes,
                         enhancement_level=enhancement_level,
+                        target_model=target_model,
                     )
 
                 logger.info(
@@ -243,6 +246,7 @@ class PromptEnhancementService:
         style_attributes: Optional[dict[str, Any]] = None,
         template_override: Optional[Any] = None,
         enhancement_level: str = "standard",
+        target_model: Optional[str] = None,
     ) -> AsyncIterator[dict]:
         """Streaming counterpart of :meth:`enhance_prompt`.
 
@@ -258,7 +262,7 @@ class PromptEnhancementService:
         retried transparently. Callers should surface an error event and may
         fall back to :meth:`enhance_prompt`.
         """
-        logger.info("Starting streaming prompt enhancement request")
+        logger.info("Starting streaming prompt enhancement request (target_model=%s)", target_model)
 
         # STEP 1: Validate request parameters (mirrors enhance_prompt)
         if not prompt or not prompt.strip():
@@ -300,12 +304,13 @@ class PromptEnhancementService:
 
         # ── DUAL-PATH ROUTING (stream) ────────────────────────────────────────
         if _use_adaptive_stream:
-            logger.info("AMPE stream path selected (role=%r). Skipping variable extraction.", role)
+            logger.info("AMPE stream path selected (role=%r, target_model=%r). Skipping variable extraction.", role, target_model)
             effective_vars: dict = {"REQUEST": prompt}
             messages = self.prompt_builder.build_adaptive_messages(
                 raw_prompt=prompt,
                 enhancement_level=enhancement_level,
                 role=role,
+                target_model=target_model,
             )
         else:
             # STEP 2.5: Dynamically infer / extract template variables from the user prompt
@@ -340,6 +345,7 @@ class PromptEnhancementService:
                 system_instructions=None,
                 style_attributes=style_attributes,
                 enhancement_level=enhancement_level,
+                target_model=target_model,
             )
 
         # Emit template metadata up front so the client can render context

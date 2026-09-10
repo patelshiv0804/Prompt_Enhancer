@@ -42,6 +42,7 @@ class PromptSummary(BaseModel):
     original_prompt: Optional[str] = None
     template_id: Optional[UUID] = None
     ai_model_id: Optional[UUID] = None
+    target_model: Optional[str] = None
     current_version_id: Optional[UUID] = None
     old_analysis: Optional[dict] = None
     new_analysis: Optional[dict] = None
@@ -64,6 +65,7 @@ class PromptDetailResponse(BaseModel):
     original_prompt: str
     template: Optional[TemplateSummary] = None
     ai_model: Optional[AIModelSummary] = None
+    target_model: Optional[str] = None
     current_version: Optional[PromptVersionSummary] = None
     version_count: int = Field(default=0, ge=0)
     old_analysis: Optional[dict] = None

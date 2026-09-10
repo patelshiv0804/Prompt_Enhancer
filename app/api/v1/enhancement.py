@@ -77,6 +77,11 @@ class EnhancePromptRequest(BaseModel):
         default=None,
         description="Explicitly selected library template UUID. When provided, this template's recipe is used for enhancement instead of automatic semantic retrieval.",
     )
+    target_model: Optional[str] = Field(
+        default=None,
+        description="Target destination AI model (e.g. DeepSeek, Perplexity, Higgsfield, Midjourney, VEO, Claude, ChatGPT, Gemini, Grok, or None).",
+        examples=["DeepSeek"],
+    )
 
 
 class AnalyzePromptRequest(BaseModel):
@@ -337,6 +342,7 @@ async def enhance_prompt(
             style_attributes=style_attributes,
             template_override=template_override,
             enhancement_level=resolved_level,
+            target_model=payload.target_model,
         )
         enhanced_text = enhance_res["enhanced_prompt"]
 
@@ -352,6 +358,7 @@ async def enhance_prompt(
             original_prompt=payload.prompt,
             enhanced_prompt=enhanced_text,
             template_id=enhance_res["template_id"],
+            target_model=payload.target_model,
             old_analysis=None,
             new_analysis=None,
             grade=None,
@@ -488,6 +495,7 @@ async def enhance_prompt_stream(
                 style_attributes=style_attributes,
                 template_override=template_override,
                 enhancement_level=resolved_level,
+                target_model=payload.target_model,
             ):
                 etype = ev.get("type")
                 if etype == "meta":
@@ -525,6 +533,7 @@ async def enhance_prompt_stream(
                 original_prompt=payload.prompt,
                 enhanced_prompt=enhanced_text,
                 template_id=final_ev["template_id"],
+                target_model=payload.target_model,
                 old_analysis=None,
                 new_analysis=None,
                 grade=None,

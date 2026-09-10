@@ -24,6 +24,25 @@ from app.services.exceptions import (
 
 logger = logging.getLogger("promptiq.prompt_reenhance")
 
+# Values that mean "no specific destination model" — treated as absent so an
+# empty/placeholder override falls back to the model stored on the prompt.
+_UNIVERSAL_TARGETS = {"none", "null", "universal", "auto", ""}
+
+
+def _clean_target_override(target_model: Optional[str]) -> Optional[str]:
+    """Normalize a caller-supplied target_model override.
+
+    Returns the trimmed model name when it names a real destination model, or
+    ``None`` when it is empty / universal so the caller can fall back to the
+    value already persisted on the prompt.
+    """
+    if not isinstance(target_model, str):
+        return None
+    cleaned = target_model.strip()
+    if not cleaned or cleaned.lower() in _UNIVERSAL_TARGETS:
+        return None
+    return cleaned
+
 
 class PromptReenhanceService:
     """
@@ -60,6 +79,7 @@ class PromptReenhanceService:
         self,
         session: AsyncSession,
         prompt_id: str,
+        target_model: Optional[str] = None,
     ) -> dict[str, Any]:
         total_start = time.perf_counter()
         logger.info("Starting re-enhancement for prompt_id=%s", prompt_id)
@@ -118,6 +138,15 @@ class PromptReenhanceService:
                 raise PromptVersionException("Failed to analyse input prompt.") from exc
 
         # ── 5. Run enhancement using the pre-selected template ────────────────
+        # An explicit, non-universal override from the caller wins; otherwise
+        # fall back to the destination model the prompt was originally optimized
+        # for so model-specific formatting is preserved across re-enhancements.
+        override_target = _clean_target_override(target_model)
+        effective_target = override_target or prompt.target_model
+        logger.info(
+            "Re-enhance target_model: override=%s stored=%s effective=%s",
+            override_target, prompt.target_model, effective_target,
+        )
         llm_start = time.perf_counter()
         try:
             enhance_res = await self.enhancement_service.enhance_prompt(
@@ -126,6 +155,7 @@ class PromptReenhanceService:
                 mode=template.mode if template else None,
                 prompt=input_text,
                 template_override=template,
+                target_model=effective_target,
             )
         except Exception as exc:
             logger.exception("Prompt enhancement failed during re-enhancement")
@@ -200,6 +230,10 @@ class PromptReenhanceService:
             # Update prompt latest scores
             prompt.new_analysis = new_analysis
             prompt.grade = grade_after
+            # Persist an explicit destination-model override so history and any
+            # future re-enhance reflect the model the user just chose.
+            if override_target:
+                prompt.target_model = override_target
             await self.prompt_repository.update(session, prompt, {})
             await session.flush()
 
@@ -261,6 +295,7 @@ class PromptReenhanceService:
         self,
         session: AsyncSession,
         prompt_id: str,
+        target_model: Optional[str] = None,
     ) -> AsyncIterator[dict]:
         """Streaming counterpart of :meth:`reenhance_prompt`.
 
@@ -325,6 +360,14 @@ class PromptReenhanceService:
         # Single attempt (no retry): once tokens have been emitted the stream
         # can't be transparently retried, so any failure here is surfaced as an
         # error to the caller, which may fall back to the blocking endpoint.
+        # Resolve destination model: explicit override wins, else the model the
+        # prompt was originally optimized for (preserves model-specific format).
+        override_target = _clean_target_override(target_model)
+        effective_target = override_target or prompt.target_model
+        logger.info(
+            "Streaming re-enhance target_model: override=%s stored=%s effective=%s",
+            override_target, prompt.target_model, effective_target,
+        )
         llm_start = time.perf_counter()
         enhanced_text: Optional[str] = None
         try:
@@ -334,6 +377,7 @@ class PromptReenhanceService:
                 mode=template.mode if template else None,
                 prompt=input_text,
                 template_override=template,
+                target_model=effective_target,
             ):
                 etype = ev.get("type")
                 if etype == "meta":
@@ -406,6 +450,10 @@ class PromptReenhanceService:
 
             prompt.new_analysis = new_analysis
             prompt.grade = grade_after
+            # Persist an explicit destination-model override so history and any
+            # future re-enhance reflect the model the user just chose.
+            if override_target:
+                prompt.target_model = override_target
             await self.prompt_repository.update(session, prompt, {})
             await session.flush()
 

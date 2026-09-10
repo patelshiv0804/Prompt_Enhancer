@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Optional, Any
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -135,12 +135,28 @@ class PromptSearchMatch(BaseModel):
     old_analysis: Optional[dict] = None
     new_analysis: Optional[dict] = None
     grade: Optional[str] = None
+    target_model: Optional[str] = None
     created_at: datetime
 
 class PromptSearchResponse(BaseModel):
     success: bool = True
     message: str = "Semantic search complete."
     results: list[PromptSearchMatch]
+
+
+class ReenhanceRequest(BaseModel):
+    """Optional body for the re-enhance endpoints.
+
+    ``target_model`` lets the client override the destination model recorded on
+    the prompt for this re-enhancement (e.g. the user switched the target-model
+    dropdown before re-running). When omitted/None the service falls back to the
+    model already stored on the prompt, so existing clients that POST no body
+    keep working unchanged.
+    """
+    target_model: Optional[str] = Field(
+        default=None,
+        description="Destination model to format the output for (e.g. 'Claude', 'ChatGPT'). Overrides the stored value.",
+    )
 
 
 @router.post(
@@ -235,6 +251,7 @@ async def get_prompt(
             original_prompt=prompt.original_prompt,
             template=TemplateSummary(**prompt.template.model_dump()) if prompt.template else None,
             ai_model=AIModelSummary(**prompt.ai_model.model_dump()) if prompt.ai_model else None,
+            target_model=prompt.target_model,
             current_version=PromptVersionSummary(**prompt.current_version.model_dump()) if prompt.current_version else None,
             version_count=len(prompt.versions) if prompt.versions else 0,
             old_analysis=prompt.old_analysis,
@@ -356,6 +373,7 @@ async def reenhance_prompt(
     prompt_id: str,
     session: AsyncSession = Depends(get_session),
     user_id: UUID = Depends(get_current_user_id),
+    payload: Optional[ReenhanceRequest] = Body(default=None),
     prompt_service: PromptService = Depends(get_prompt_service),
     reenhance_service: PromptReenhanceService = Depends(get_prompt_reenhance_service),
 ) -> ReenhanceVersionResponse:
@@ -365,6 +383,7 @@ async def reenhance_prompt(
         result = await reenhance_service.reenhance_prompt(
             session=session,
             prompt_id=prompt_id,
+            target_model=payload.target_model if payload else None,
         )
         return ReenhanceVersionResponse(**result)
     except Exception as exc:
@@ -389,6 +408,7 @@ async def reenhance_prompt_stream(
     prompt_id: str,
     session: AsyncSession = Depends(get_session),
     user_id: UUID = Depends(get_current_user_id),
+    payload: Optional[ReenhanceRequest] = Body(default=None),
     prompt_service: PromptService = Depends(get_prompt_service),
     reenhance_service: PromptReenhanceService = Depends(get_prompt_reenhance_service),
 ) -> StreamingResponse:
@@ -402,12 +422,17 @@ async def reenhance_prompt_stream(
     except Exception as exc:
         raise map_service_error(exc)
 
+    # Capture the override now; the generator below runs after the response
+    # object exists and can no longer read the request body.
+    override_target_model = payload.target_model if payload else None
+
     async def event_generator():
         try:
             final_ev: Optional[dict] = None
             async for ev in reenhance_service.reenhance_prompt_stream(
                 session=session,
                 prompt_id=prompt_id,
+                target_model=override_target_model,
             ):
                 etype = ev.get("type")
                 if etype == "meta":
