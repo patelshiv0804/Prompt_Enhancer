@@ -397,3 +397,31 @@ def test_cleaning_cannot_rescue_a_reply_that_answered_the_question(
     cleaned = service._clean_enhanced_output(raw)
     assert cleaned == raw
     assert service.is_task_execution(cleaned, ORIGINAL) is True
+
+
+def test_trailing_why_this_version_is_stronger_is_stripped(
+    service: PromptEnhancementService,
+) -> None:
+    raw = (
+        "ENHANCED PROMPT:\n"
+        "You are an expert copywriter. Objective: write landing page.\n\n"
+        "WHY THIS VERSION IS STRONGER:\n"
+        "This version is stronger because it defines constraints."
+    )
+    cleaned = service._clean_enhanced_output(raw)
+    assert cleaned == "You are an expert. Objective: write landing page."
+    assert "WHY THIS VERSION IS STRONGER" not in cleaned
+
+
+def test_trailing_why_this_version_is_stronger_with_markdown_headers(
+    service: PromptEnhancementService,
+) -> None:
+    raw = (
+        "You are an expert copywriter. Objective: write landing page.\n\n"
+        "### WHY THIS VERSION IS STRONGER\n"
+        "1. It is more specific."
+    )
+    cleaned = service._clean_enhanced_output(raw)
+    assert cleaned == "You are an expert. Objective: write landing page."
+    assert "WHY THIS VERSION IS STRONGER" not in cleaned
+

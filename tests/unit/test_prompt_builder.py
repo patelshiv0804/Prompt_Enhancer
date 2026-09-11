@@ -317,3 +317,22 @@ def test_adaptive_messages_with_target_model(builder: PromptBuilder) -> None:
     assert "HIGGSFIELD AI" in msgs["system"]
     assert "4-Layer Cinematic Video Direction Architecture" in msgs["system"]
     assert "Camera dolly in on Mars base" in msgs["user"]
+
+
+def test_builder_strips_why_this_version_is_stronger_from_template(builder: PromptBuilder) -> None:
+    template_with_aux = (
+        "STEP 4 — Output the enhanced prompt\n"
+        "Present the result in this structure:\n"
+        "ENHANCED PROMPT (the complete prompt)\n"
+        "WHY THIS VERSION IS STRONGER (2-3 sentences naming the failure this avoids)\n"
+        "Do not generate the actual creative piece."
+    )
+    msgs = builder.build_messages(
+        role="writer",
+        mode="creative",
+        rendered_template=template_with_aux,
+    )
+    assert "WHY THIS VERSION IS STRONGER" not in msgs["user"]
+    assert "WHY THIS VERSION IS STRONGER" in builder.DEFAULT_SYSTEM_INSTRUCTIONS
+    assert "ENHANCED PROMPT (the complete prompt)" in msgs["user"]
+

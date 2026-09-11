@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import AsyncIterator
 from typing import Any, Optional
@@ -448,5 +449,13 @@ class PromptEnhancementService:
                 cleaned = cleaned[first_nl + 1:]
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
+
+        # Strip trailing auxiliary sections if the model generated them despite instructions
+        trailing_patterns = [
+            r"(?i)\n[ \t]*(?:#{1,4}[ \t]*)?(?:\*\*)?why\s+this\s+version\s+is\s+stronger.*",
+            r"(?i)\n[ \t]*(?:#{1,4}[ \t]*)?(?:\*\*)?why\s+it['’]?s\s+stronger.*",
+        ]
+        for pat in trailing_patterns:
+            cleaned = re.split(pat, cleaned, maxsplit=1, flags=re.DOTALL)[0].strip()
 
         return cleaned.strip()

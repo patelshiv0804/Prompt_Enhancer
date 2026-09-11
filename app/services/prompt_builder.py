@@ -150,8 +150,26 @@ class PromptBuilder:
         "Your sole task is to transform the user's raw prompt into an optimized, structured prompt based on the provided instructions. "
         "Crucially, you must NEVER answer, execute, or solve the user's request. "
         "Instead, your output MUST be the newly constructed, enhanced prompt itself, ready for execution. "
-        "Output ONLY the final enhanced prompt. Do not include introductory text, conversation, or markdown code blocks."
+        "Output ONLY the final enhanced prompt. Do not include introductory text, conversation, or markdown code blocks. "
+        "CRITICAL NEGATIVE CONSTRAINT: Never generate or include sections like 'WHY THIS VERSION IS STRONGER', "
+        "'DIAGNOSED MODE', 'STEP 1 NOTES', 'CLARIFIERS', or any explanations, rationales, or commentary. "
+        "Output ONLY the runnable prompt text itself."
     )
+
+    @staticmethod
+    def _strip_unwanted_template_sections(template_text: str) -> str:
+        """Strip instructions from the template that ask the LLM to generate
+        auxiliary sections like 'WHY THIS VERSION IS STRONGER' so the model is
+        never instructed to output them.
+        """
+        if not template_text:
+            return ""
+        return re.sub(
+            r"(?i)^[ \t]*(?:#{1,4}[ \t]*)?(?:\*\*)?WHY THIS VERSION IS STRONGER[^\n]*\n?",
+            "",
+            template_text,
+            flags=re.MULTILINE,
+        )
 
     # Appended to the system message on the injection-hardened path so the
     # model treats everything in the user message as data to transform, never
@@ -275,7 +293,9 @@ class PromptBuilder:
         # Sanitize all user-controlled fields before interpolation.
         safe_role = neutralize_delimiters(role or "N/A").strip() or "N/A"
         safe_mode = neutralize_delimiters(mode or "N/A").strip() or "N/A"
-        safe_template = neutralize_delimiters(rendered_template).strip()
+        safe_template = self._strip_unwanted_template_sections(
+            neutralize_delimiters(rendered_template).strip()
+        )
 
         system_parts = [
             sys_inst.strip(),
@@ -328,7 +348,9 @@ class PromptBuilder:
         # Sanitize all user-controlled inputs before string interpolation.
         safe_role = neutralize_delimiters(role.strip())
         safe_mode = neutralize_delimiters(mode.strip())
-        safe_template = neutralize_delimiters(rendered_template).strip()
+        safe_template = self._strip_unwanted_template_sections(
+            neutralize_delimiters(rendered_template).strip()
+        )
 
         # Assemble prompt components deterministically
         parts = [
