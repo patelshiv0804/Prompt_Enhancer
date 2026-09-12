@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Union
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -10,7 +10,7 @@ from .enums import ModelProvider
 
 
 class AIModelBase(BaseModel):
-    provider: ModelProvider = Field(...)
+    provider: Union[ModelProvider, str] = Field(...)
     model_name: str = Field(..., max_length=150)
     description: Optional[str] = Field(default=None, max_length=1000)
     is_active: Optional[bool] = Field(default=True)
@@ -19,12 +19,12 @@ class AIModelBase(BaseModel):
 
 
 class AIModelCreate(AIModelBase):
-    provider: ModelProvider = Field(...)
+    provider: Union[ModelProvider, str] = Field(...)
     model_name: str = Field(..., max_length=150)
 
 
 class AIModelUpdate(BaseModel):
-    provider: Optional[ModelProvider] = None
+    provider: Optional[Union[ModelProvider, str]] = None
     model_name: Optional[str] = Field(default=None, max_length=150)
     description: Optional[str] = Field(default=None, max_length=1000)
     is_active: Optional[bool] = None
@@ -34,7 +34,7 @@ class AIModelUpdate(BaseModel):
 
 class AIModelSummary(BaseModel):
     id: UUID
-    provider: ModelProvider
+    provider: Union[ModelProvider, str]
     model_name: str
     is_active: bool
 

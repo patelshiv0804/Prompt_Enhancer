@@ -58,6 +58,7 @@ class Profile(SQLModel, table=True):
     deleted_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 
     prompts: List["Prompt"] = Relationship(back_populates="profile")
+    templates: List["Template"] = Relationship(back_populates="profile")
     settings: Optional["UserSettings"] = Relationship(
         back_populates="profile",
         sa_relationship_kwargs={"uselist": False, "cascade": "all, delete-orphan"}
@@ -113,6 +114,7 @@ class Template(SQLModel, table=True):
         Index("ix_templates_is_featured", "is_featured"),
         Index("ix_templates_is_approved", "is_approved"),
         Index("ix_templates_ai_model_id", "ai_model_id"),
+        Index("ix_templates_user_id", "user_id"),
     )
 
     id: UUID = Field(
@@ -151,9 +153,14 @@ class Template(SQLModel, table=True):
         default=0,
         sa_column=Column(Integer, nullable=False, server_default=text("0")),
     )
+    user_id: Optional[UUID] = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("profiles.id", ondelete="CASCADE"), nullable=True),
+    )
 
     ai_model: Optional[AIModel] = Relationship(back_populates="templates")
     prompts: List["Prompt"] = Relationship(back_populates="template")
+    profile: Optional[Profile] = Relationship(back_populates="templates")
 
 
 class Prompt(SQLModel, table=True):

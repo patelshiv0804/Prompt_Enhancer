@@ -129,6 +129,13 @@ from app.services.intent_analysis_service import IntentAnalysisService
 from app.services.role_resolution_service import RoleResolutionService
 from app.services.mode_resolution_service import ModeResolutionService
 from app.services.candidate_template_service import CandidateTemplateService
+from app.services.template_service import TemplateService
+
+def get_template_service(
+    repo: TemplateRepository = Depends(get_template_repository),
+    emb: EmbeddingService = Depends(get_embedding_service),
+) -> TemplateService:
+    return TemplateService(repository=repo, embedding_service=emb)
 
 def get_intent_analysis_service(
     llm: BaseLLMProvider = Depends(get_llm_provider),

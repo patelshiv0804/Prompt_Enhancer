@@ -9,6 +9,7 @@ class ModelProvider(str, Enum):
     AZURE_OPENAI = "azure_openai"
     GOOGLE_PALM = "google_palm"
     MISTRAL = "mistral"
+    UNKNOWN = "unknown"
     OTHER = "other"
 
 

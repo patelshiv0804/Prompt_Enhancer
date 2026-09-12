@@ -14,7 +14,7 @@ from .prompt_version import (
     PromptVersionRestoreRequest,
     PromptVersionSummary,
 )
-from .template import TemplateCreate, TemplateRead, TemplateSearchResponse, TemplateSummary, TemplateUpdate
+from .template import TemplateCreate, TemplateRead, TemplateResponse, TemplateSearchResponse, TemplateSummary, TemplateUpdate
 from .enums import ModelProvider, PromptGrade, TemplateMode, VersionType
 from .style_profiles import (
     CreateStyleProfileRequest,

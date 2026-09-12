@@ -329,6 +329,8 @@ async def enhance_prompt(
             template_override = await template_repo.get_by_id(session, str(payload.template_id))
             if not template_override or getattr(template_override, "deleted_at", None) is not None:
                 raise TemplateNotFoundError("Selected template not found.")
+            if template_override.user_id is not None and str(template_override.user_id) != str(profile.id):
+                raise TemplateNotFoundError("Selected template not found.")
             effective_role = template_override.role or payload.role
             effective_mode = template_override.mode or payload.mode
 
@@ -474,6 +476,8 @@ async def enhance_prompt_stream(
         if payload.template_id is not None:
             template_override = await template_repo.get_by_id(session, str(payload.template_id))
             if not template_override or getattr(template_override, "deleted_at", None) is not None:
+                raise TemplateNotFoundError("Selected template not found.")
+            if template_override.user_id is not None and str(template_override.user_id) != str(profile.id):
                 raise TemplateNotFoundError("Selected template not found.")
             effective_role = template_override.role or payload.role
             effective_mode = template_override.mode or payload.mode

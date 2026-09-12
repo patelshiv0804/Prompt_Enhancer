@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Union
+from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -39,10 +40,27 @@ class TemplateRepository(BaseRepository[Template]):
     async def get_by_id(
         self,
         session: AsyncSession,
-        id: str,
+        id: Union[str, UUID],
         include_ai_model: bool = False,
     ) -> Optional[Template]:
         statement = select(Template).where(Template.id == id)
+        if include_ai_model:
+            statement = statement.options(selectinload(Template.ai_model))
+        result = await session.execute(statement)
+        return result.scalar_one_or_none()
+
+    async def get_by_id_and_user(
+        self,
+        session: AsyncSession,
+        id: Union[str, UUID],
+        user_id: Optional[UUID] = None,
+        include_ai_model: bool = False,
+    ) -> Optional[Template]:
+        statement = select(Template).where(Template.id == id)
+        if user_id is not None:
+            statement = statement.where(or_(Template.user_id == user_id, Template.user_id.is_(None)))
+        else:
+            statement = statement.where(Template.user_id.is_(None))
         if include_ai_model:
             statement = statement.options(selectinload(Template.ai_model))
         result = await session.execute(statement)
@@ -60,14 +78,22 @@ class TemplateRepository(BaseRepository[Template]):
         is_approved: Optional[bool] = None,
         is_featured: Optional[bool] = None,
         only_active_models: bool = False,
+        user_id: Optional[UUID] = None,
+        mine: bool = False,
     ) -> list[Template]:
         statement = select(Template)
+        if mine and user_id is not None:
+            statement = statement.where(Template.user_id == user_id)
+        elif user_id is not None:
+            statement = statement.where(or_(Template.user_id == user_id, Template.user_id.is_(None)))
+        else:
+            statement = statement.where(Template.user_id.is_(None))
+
         if mode is not None:
             statement = statement.where(Template.mode == mode)
         if category is not None:
             statement = statement.where(Template.category == category)
         if role is not None:
-            from sqlalchemy import func
             statement = statement.where(func.lower(Template.role) == func.lower(role))
         if ai_model_id is not None:
             statement = statement.where(Template.ai_model_id == ai_model_id)
@@ -77,6 +103,15 @@ class TemplateRepository(BaseRepository[Template]):
             statement = statement.where(Template.is_featured == is_featured)
         if only_active_models:
             statement = statement.join(Template.ai_model).where(AIModel.is_active == True)
+
+        if user_id is not None:
+            statement = statement.order_by(
+                case((Template.user_id == user_id, 0), else_=1),
+                Template.created_at.desc(),
+            )
+        else:
+            statement = statement.order_by(Template.created_at.desc())
+
         statement = statement.limit(limit).offset(offset)
         result = await session.execute(statement)
         return result.scalars().all()
@@ -103,12 +138,16 @@ class TemplateRepository(BaseRepository[Template]):
         mode: Optional[str] = None,
         is_approved: Optional[bool] = None,
         limit: int = 100,
+        user_id: Optional[UUID] = None,
     ) -> list[tuple[Template, float]]:
-        from sqlalchemy import func
         distance_col = Template.embedding.cosine_distance(vector).label("distance")
         statement = select(Template, distance_col)
         if is_approved is not None:
             statement = statement.where(Template.is_approved == is_approved)
+        if user_id is not None:
+            statement = statement.where(or_(Template.user_id == user_id, Template.user_id.is_(None)))
+        else:
+            statement = statement.where(Template.user_id.is_(None))
         if role is not None:
             statement = statement.where(func.lower(Template.role) == func.lower(role))
         if mode is not None:

@@ -148,3 +148,15 @@ async def get_current_user_id(
         detail="Not authenticated",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+async def get_optional_current_user_id(
+    request: Request,
+    token: Optional[str] = Depends(oauth2_scheme),
+) -> Optional[UUID]:
+    """FastAPI dependency — extracts user_id if a valid JWT token is present, else returns None."""
+    try:
+        return await get_current_user_id(request, token)
+    except HTTPException:
+        return None
+
