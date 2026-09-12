@@ -409,7 +409,7 @@ def test_trailing_why_this_version_is_stronger_is_stripped(
         "This version is stronger because it defines constraints."
     )
     cleaned = service._clean_enhanced_output(raw)
-    assert cleaned == "You are an expert. Objective: write landing page."
+    assert cleaned == "You are an expert copywriter. Objective: write landing page."
     assert "WHY THIS VERSION IS STRONGER" not in cleaned
 
 
@@ -422,6 +422,6 @@ def test_trailing_why_this_version_is_stronger_with_markdown_headers(
         "1. It is more specific."
     )
     cleaned = service._clean_enhanced_output(raw)
-    assert cleaned == "You are an expert. Objective: write landing page."
+    assert cleaned == "You are an expert copywriter. Objective: write landing page."
     assert "WHY THIS VERSION IS STRONGER" not in cleaned
 

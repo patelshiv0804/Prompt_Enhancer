@@ -100,7 +100,6 @@ class PromptAnalysisService:
                 prompt=analysis_prompt,
                 max_tokens=settings.llm_max_tokens,
                 temperature=settings.prompt_analysis_temperature,
-                response_format={"type": "json_object"},
             )
         except LLMTimeoutError as exc:
             logger.exception("LLM timeout during prompt analysis")
@@ -116,11 +115,9 @@ class PromptAnalysisService:
 
         try:
             data = json.loads(cleaned_json, strict=False)
-            self._validate_analysis_data(data)
-        except (json.JSONDecodeError, ScoringException) as exc:
-            logger.warning("Standard JSON parse failed (%s); attempting regex fallback extraction.", exc)
-            data = self._fallback_extract_analysis(res.text)
-            self._validate_analysis_data(data)
+        except json.JSONDecodeError as exc:
+            raise PromptAnalysisException(f"LLM returned invalid JSON response: {exc}") from exc
+        self._validate_analysis_data(data)
 
         # Compute overall score and inject weights
         dims = data["dimensions"]
