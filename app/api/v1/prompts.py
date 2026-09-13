@@ -105,9 +105,20 @@ async def list_prompts(
             sort_by=sort_by,
             sort_order=sort_order,
         )
+        items = []
+        for prompt in prompts:
+            p_dict = prompt.model_dump()
+            if prompt.current_version:
+                p_dict["current_version"] = PromptVersionSummary(**prompt.current_version.model_dump())
+            if prompt.template:
+                p_dict["template"] = TemplateSummary(**prompt.template.model_dump())
+            if prompt.ai_model:
+                p_dict["ai_model"] = AIModelSummary(**prompt.ai_model.model_dump())
+            items.append(PromptSummary(**p_dict))
+
         return PaginatedResponse(
             message="Prompt list retrieved.",
-            data=[PromptSummary(**prompt.model_dump()) for prompt in prompts],
+            data=items,
             page=page,
             page_size=page_size,
             total=total_count,
