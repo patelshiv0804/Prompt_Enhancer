@@ -377,6 +377,14 @@ async def enhance_prompt(
         )
         await session.commit()
 
+        # Increment template use_count if a template was used
+        used_template_id = enhance_res.get("template_id")
+        if used_template_id and str(used_template_id) != "adaptive":
+            try:
+                await template_repo.increment_use_count(session, used_template_id)
+            except Exception as inc_err:
+                logger.warning("Failed to increment use_count for template %s: %s", used_template_id, inc_err)
+
         # 3. Schedule background analysis & DB update
         background_tasks.add_task(
             _process_background_analysis,
@@ -549,6 +557,14 @@ async def enhance_prompt_stream(
                 tool_recommendations=None,
             )
             await session.commit()
+
+            # Increment template use_count if a template was used
+            used_template_id = final_ev.get("template_id")
+            if used_template_id and str(used_template_id) != "adaptive":
+                try:
+                    await template_repo.increment_use_count(session, used_template_id)
+                except Exception as inc_err:
+                    logger.warning("Failed to increment use_count for template %s: %s", used_template_id, inc_err)
 
             # Fire-and-forget deep analysis. Can't use FastAPI BackgroundTasks
             # here (no Response object to attach them to inside a generator), so

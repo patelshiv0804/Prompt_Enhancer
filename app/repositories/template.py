@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import logging
 from typing import Iterable, Optional, Union
 from uuid import UUID
 
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -11,6 +12,8 @@ from app.core import redis_client
 from app.core.config import settings
 from app.db.models import AIModel, Template
 from .base import BaseRepository
+
+logger = logging.getLogger(__name__)
 
 
 async def invalidate_role_mode_cache(*roles: str) -> None:
@@ -213,3 +216,21 @@ class TemplateRepository(BaseRepository[Template]):
         modes = [m for m in result.scalars().all() if m]
         await redis_client.set_json(key, modes, ttl=settings.redis_ttl_roles_modes)
         return modes
+
+    async def increment_use_count(
+        self, session: AsyncSession, id: Union[str, UUID]
+    ) -> None:
+        """Atomically increment the use_count of a template by 1."""
+        try:
+            clean_id = UUID(str(id)) if not isinstance(id, UUID) else id
+            statement = (
+                update(Template)
+                .where(Template.id == clean_id)
+                .values(use_count=Template.use_count + 1)
+            )
+            await session.execute(statement)
+            await session.commit()
+            logger.info("Incremented use_count for template %s", clean_id)
+        except Exception as e:
+            logger.warning("Failed to increment use_count for template %s: %s", id, e)
+

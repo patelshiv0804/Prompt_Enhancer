@@ -253,6 +253,11 @@ class PromptReenhanceService:
 
             await session.commit()
             transaction_status = "COMMITTED"
+            if prompt.template_id:
+                try:
+                    await self.template_repository.increment_use_count(session, str(prompt.template_id))
+                except Exception as inc_err:
+                    logger.warning("Failed to increment use_count for template %s: %s", prompt.template_id, inc_err)
         except Exception as exc:
             logger.exception("Re-enhancement transaction failed. Rolling back.")
             transaction_status = "ROLLED_BACK"
@@ -472,6 +477,11 @@ class PromptReenhanceService:
 
             await session.commit()
             transaction_status = "COMMITTED"
+            if prompt.template_id:
+                try:
+                    await self.template_repository.increment_use_count(session, str(prompt.template_id))
+                except Exception as inc_err:
+                    logger.warning("Failed to increment use_count for template %s: %s", prompt.template_id, inc_err)
         except Exception as exc:
             logger.exception("Streaming re-enhancement transaction failed. Rolling back.")
             transaction_status = "ROLLED_BACK"
