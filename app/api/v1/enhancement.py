@@ -167,8 +167,10 @@ async def _process_background_analysis(
         from app.repositories.prompt import PromptRepository
         from app.repositories.prompt_version import PromptVersionRepository
 
+        from app.services.prompt_title_service import PromptTitleService
         llm_provider = LLMFactory.get_provider()
         analysis_service = PromptAnalysisService(llm_provider=llm_provider)
+        title_service = PromptTitleService(llm_provider=llm_provider)
         # comparison_service = PromptComparisonService(llm_provider=llm_provider)
         embedding_service = EmbeddingService()
         tool_rec_service = ToolRecommendationService(embedding_service=embedding_service)
@@ -187,10 +189,18 @@ async def _process_background_analysis(
             except Exception:
                 return tool_rec_service.get_fallback()
 
-        orig_analysis, enh_analysis, tool_rec = await asyncio.gather(
+        async def _safe_title():
+            try:
+                return await title_service.generate_title(original_prompt)
+            except Exception as e:
+                logger.warning("Title generation error: %s", e)
+                return None
+
+        orig_analysis, enh_analysis, tool_rec, generated_title = await asyncio.gather(
             _safe_analyze(original_prompt),
             _safe_analyze(enhanced_prompt),
             _safe_tool_rec(),
+            _safe_title(),
         )
 
         # Fallback guarantee: ensure neither analysis is ever None
@@ -239,6 +249,8 @@ async def _process_background_analysis(
             "grade": grade_after,
             "tool_recommendations": tool_rec_summary,
         }
+        if generated_title:
+            prompt_update_data["title"] = generated_title
         version_update_data = {
             "old_analysis": orig_analysis,
             "new_analysis": enh_analysis,
@@ -348,12 +360,8 @@ async def enhance_prompt(
         )
         enhanced_text = enhance_res["enhanced_prompt"]
 
-        # 2. Persist initial record in PostgreSQL immediately
-        display_title = (
-            f"{effective_role} - {effective_mode}"
-            if (effective_role or effective_mode)
-            else "Adaptive Enhancement"
-        )
+        # 2. Persist initial record in PostgreSQL immediately (fallback title is the prompt itself)
+        display_title = (payload.prompt or "").strip().replace("\n", " ")[:60].strip() or "Untitled Prompt"
         prompt_record = await persistence_service.create_prompt_with_version(
             session=session,
             user_id=str(profile.id),
@@ -526,11 +534,7 @@ async def enhance_prompt_stream(
             # The request-scoped session stays open until this generator is
             # exhausted, so the commit here (and the dependency's own trailing
             # commit) both operate on a live session.
-            display_title = (
-                f"{effective_role} - {effective_mode}"
-                if (effective_role or effective_mode)
-                else "Adaptive Enhancement"
-            )
+            display_title = (payload.prompt or "").strip().replace("\n", " ")[:60].strip() or "Untitled Prompt"
             prompt_record = await persistence_service.create_prompt_with_version(
                 session=session,
                 user_id=str(profile.id),
