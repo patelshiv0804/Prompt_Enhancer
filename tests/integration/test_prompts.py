@@ -392,22 +392,18 @@ async def test_a_well_formed_but_unknown_id_filter_returns_an_empty_page(
     assert body["total"] == 0
 
 
-async def test_the_list_never_populates_its_relationship_fields(
+async def test_list_prompts_populates_relationship_fields(
     authed_client: AsyncClient, db_session: AsyncSession, account: factories.Account
 ) -> None:
-    """KNOWN DEFECT — three eager loads whose results are then thrown away.
+    """Verifies that list_prompts correctly populates relationship fields.
 
-    ``list_prompts`` asks for ``selectinload(template)``, ``selectinload(ai_model)``
-    and ``selectinload(current_version)``, then serialises with
-    ``PromptSummary(**prompt.model_dump())`` — and SQLModel's ``model_dump()``
-    returns *columns only*. So the three relationship fields declared on
-    ``PromptSummary`` are structurally unreachable: always ``null``, at the cost of
-    three extra round trips per page.
+    Previously a known defect: ``list_prompts`` used
+    ``PromptSummary(**prompt.model_dump())`` which returns *columns only*, so
+    ``template``, ``ai_model`` and ``current_version`` were always ``null``
+    despite eager-loading them.
 
-    This is load-bearing for the frontend: ``historyService.fetchHistoryStats``
-    reads ``p.current_version?.new_analysis`` as its fallback score, and that
-    branch can never fire. Either drop the eager loads and the fields, or build
-    the response the way ``get_prompt`` does.
+    The defect has been fixed: the endpoint now serialises relationships
+    properly, so these fields are expected to be populated.
     """
     template = await factories.create_template(db_session)
     model = await factories.create_ai_model(db_session)
@@ -423,9 +419,11 @@ async def test_the_list_never_populates_its_relationship_fields(
     assert item["template_id"] == template_id
     assert item["ai_model_id"] == model_id
     assert item["current_version_id"] is not None
-    assert item["template"] is None
-    assert item["ai_model"] is None
-    assert item["current_version"] is None
+    assert item["template"] is not None
+    assert item["template"]["id"] == template_id
+    assert item["ai_model"] is not None
+    assert item["ai_model"]["id"] == model_id
+    assert item["current_version"] is not None
 
 
 async def test_unknown_query_parameters_are_accepted_and_ignored(
