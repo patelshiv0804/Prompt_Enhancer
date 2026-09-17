@@ -48,6 +48,22 @@ class OnboardingUpdate(BaseModel):
 
 # ── Stats & Activity Schemas ─────────────────────────────
 
+class BadgeItem(BaseModel):
+    """Gamified achievement badge with dynamic progress tracking."""
+    id: str
+    title: str
+    tier: str  # bronze, silver, gold, diamond
+    category: str
+    description: str
+    unlock_criterion: str
+    icon: str
+    color: str
+    unlocked: bool
+    progress: str
+    percentage: float
+    unlocked_at: Optional[str] = None
+
+
 class StatsResponse(BaseModel):
     """User dashboard statistics."""
     total_prompts: int = 0
@@ -58,6 +74,15 @@ class StatsResponse(BaseModel):
     streak_days: int = 0
     plan: str
     member_since: datetime
+    frequency_7d: list[int] = []
+    user_max_score: float = 0.0
+    longest_streak: int = 0
+    total_active_days: int = 0
+    activity_calendar: dict[str, int] = {}
+    unlocked_badge_count: int = 0
+    total_badge_count: int = 29
+    badges: list[BadgeItem] = []
+
 
 
 class ActivityItem(BaseModel):
