@@ -2,7 +2,7 @@
 
 from sqlalchemy import JSON
 from sqlalchemy import CheckConstraint
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from typing import List, Optional
 from uuid import UUID, uuid4
 
@@ -10,6 +10,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     Column,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -400,3 +401,66 @@ class UserSettings(SQLModel, table=True):
     )
 
     profile: Optional["Profile"] = Relationship(back_populates="settings")
+
+
+class UserDailyActivity(SQLModel, table=True):
+    __tablename__ = "user_daily_activities"
+    __table_args__ = (
+        UniqueConstraint("user_id", "activity_date", name="uq_user_daily_activities_user_date"),
+        Index("ix_user_daily_activities_user_date", "user_id", "activity_date"),
+        Index("ix_user_daily_activities_date", "activity_date"),
+    )
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        sa_column=Column(PGUUID(as_uuid=True), primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")),
+    )
+    user_id: UUID = Field(
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
+    activity_date: date = Field(
+        sa_column=Column(Date, nullable=False, index=True)
+    )
+    count: int = Field(
+        default=1,
+        sa_column=Column(Integer, nullable=False, server_default=text("1"))
+    )
+    highest_score: Optional[float] = Field(
+        default=None,
+        sa_column=Column(Float, nullable=True)
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), server_default=func.now(), nullable=False),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False),
+    )
+
+
+class UserUnlockedBadge(SQLModel, table=True):
+    __tablename__ = "user_unlocked_badges"
+    __table_args__ = (
+        UniqueConstraint("user_id", "badge_id", name="uq_user_unlocked_badges_user_badge"),
+        Index("ix_user_unlocked_badges_user", "user_id"),
+    )
+
+    id: UUID = Field(
+        default_factory=uuid4,
+        sa_column=Column(PGUUID(as_uuid=True), primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")),
+    )
+    user_id: UUID = Field(
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
+    badge_id: str = Field(
+        sa_column=Column(String(length=100), nullable=False)
+    )
+    unlocked_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), server_default=func.now(), nullable=False),
+    )
+    progress_snapshot: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(length=255), nullable=True)
+    )

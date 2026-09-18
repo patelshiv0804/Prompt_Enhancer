@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Profile, UserSettings, Prompt, Template, PromptVersion
 from app.repositories.user import ProfileRepository, SettingsRepository
 from app.services.badge_service import BadgeService
+from app.services.activity_service import ActivityService
 from app.utils.validators import is_valid_avatar_extension, sanitize_display_name
 from app.core.constants import MAX_AVATAR_FILE_SIZE
 
@@ -177,7 +178,10 @@ class ProfileService:
         profile = await self.get_profile(user_id)
         from datetime import date, timedelta
 
-        # Query all non-deleted prompts for user
+        # Ensure user's historical daily activity is backfilled if not yet present
+        await ActivityService.ensure_user_backfilled(self.db, user_id)
+
+        # Query all non-deleted prompts currently in user's Vault
         prompt_query = select(Prompt).where(Prompt.user_id == user_id).where(Prompt.deleted_at == None)
         prompt_res = await self.db.execute(prompt_query)
         prompts = list(prompt_res.scalars().all())
@@ -191,18 +195,28 @@ class ProfileService:
         ]
         average_score = round(sum(scored) / len(scored), 1) if scored else 0.0
 
-        # Compute activity_calendar, streak_days, and longest_streak
+        # Fetch immutable daily activities ledger for user
+        daily_activities = await ActivityService.get_daily_activities(self.db, user_id)
+
+        # Compute activity_calendar, streak_days, and longest_streak from the immutable ledger
         today = date.today()
         streak = 0
         longest_streak = 0
         activity_calendar: dict[str, int] = {}
+        for row in daily_activities:
+            d_str = row.activity_date.strftime("%Y-%m-%d")
+            activity_calendar[d_str] = row.count
+
+        # Also merge with any prompt dates not yet committed to ledger
         for p in prompts:
             if p.created_at:
                 d_str = p.created_at.strftime("%Y-%m-%d")
-                activity_calendar[d_str] = activity_calendar.get(d_str, 0) + 1
+                if d_str not in activity_calendar:
+                    activity_calendar[d_str] = 1
 
         prompt_dates_asc = sorted(
-            set(p.created_at.date() for p in prompts if p.created_at)
+            datetime.strptime(d_str, "%Y-%m-%d").date()
+            for d_str in activity_calendar.keys()
         )
         total_active_days = len(prompt_dates_asc)
 
@@ -235,11 +249,13 @@ class ProfileService:
         # Compute 7-day frequency sparkline: [today-6, today-5, ..., today]
         last_7_days = [today - timedelta(days=i) for i in range(6, -1, -1)]
         day_counts = {d: 0 for d in last_7_days}
-        for p in prompts:
-            if p.created_at:
-                p_date = p.created_at.date()
-                if p_date in day_counts:
-                    day_counts[p_date] += 1
+        for d_str, count in activity_calendar.items():
+            try:
+                act_d = datetime.strptime(d_str, "%Y-%m-%d").date()
+                if act_d in day_counts:
+                    day_counts[act_d] += count
+            except Exception:
+                pass
         frequency_7d = [day_counts[d] for d in last_7_days]
 
         # Extract user raw prompt scores (evaluates raw prompt score before enhancement)
@@ -307,9 +323,20 @@ class ProfileService:
                     modes_set.add(str(m).strip().lower())
         unique_modes = len(modes_set)
 
-        # Evaluate all 29 gamified badges
+        # Lifetime enhancement volume is derived from daily activities ledger
+        lifetime_prompts = sum(row.count for row in daily_activities)
+        effective_total_prompts = max(total_prompts, lifetime_prompts)
+
+        # Ledger highest score
+        ledger_best_score = max((row.highest_score for row in daily_activities if row.highest_score is not None), default=0.0)
+        effective_max_score = max(user_max_score, ledger_best_score)
+
+        # Load permanently unlocked badges
+        unlocked_badges_map = await ActivityService.get_unlocked_badges(self.db, user_id)
+
+        # Evaluate all 29 gamified badges with permanent unlock and lifetime telemetry
         badges = BadgeService.evaluate_badges(
-            total_prompts=total_prompts,
+            total_prompts=effective_total_prompts,
             user_raw_scores=user_raw_scores,
             streak_days=streak,
             inbuilt_templates_used=inbuilt_templates_used,
@@ -317,14 +344,23 @@ class ProfileService:
             max_versions=max_versions,
             unique_models=unique_models,
             unique_modes=unique_modes,
+            permanently_unlocked=unlocked_badges_map,
+            all_time_max_score=effective_max_score,
         )
         unlocked_count = sum(1 for b in badges if b["unlocked"])
 
+        # Persist any newly unlocked badges
+        newly_unlocked = [b["id"] for b in badges if b["unlocked"] and b["id"] not in unlocked_badges_map]
+        if newly_unlocked:
+            await ActivityService.persist_newly_unlocked_badges(self.db, user_id, newly_unlocked)
+            await self.db.commit()
+
         return {
             "total_prompts": total_prompts,
+            "lifetime_prompts": effective_total_prompts,
             "total_templates": total_templates,
             "total_chains": 0,
-            "total_optimizations": total_prompts,
+            "total_optimizations": effective_total_prompts,
             "average_score": average_score,
             "streak_days": streak,
             "longest_streak": longest_streak,
@@ -333,7 +369,7 @@ class ProfileService:
             "plan": profile.plan,
             "member_since": profile.created_at,
             "frequency_7d": frequency_7d,
-            "user_max_score": user_max_score,
+            "user_max_score": effective_max_score,
             "unlocked_badge_count": unlocked_count,
             "total_badge_count": len(badges),
             "badges": badges,

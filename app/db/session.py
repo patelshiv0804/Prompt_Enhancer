@@ -55,6 +55,39 @@ async def verify_database_startup() -> None:
                 )
             # Ensure tool_recommendations column exists in prompts table
             await conn.execute(text("ALTER TABLE prompts ADD COLUMN IF NOT EXISTS tool_recommendations JSONB;"))
+
+            # Ensure user_daily_activities and user_unlocked_badges tables exist (safety net alongside Alembic)
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS user_daily_activities (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+                    activity_date DATE NOT NULL,
+                    count INTEGER NOT NULL DEFAULT 1,
+                    highest_score DOUBLE PRECISION NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    CONSTRAINT uq_user_daily_activities_user_date UNIQUE (user_id, activity_date)
+                );
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_user_daily_activities_user_date
+                ON user_daily_activities (user_id, activity_date);
+            """))
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS user_unlocked_badges (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+                    badge_id VARCHAR(100) NOT NULL,
+                    unlocked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    progress_snapshot VARCHAR(255) NULL,
+                    CONSTRAINT uq_user_unlocked_badges_user_badge UNIQUE (user_id, badge_id)
+                );
+            """))
+            await conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_user_unlocked_badges_user
+                ON user_unlocked_badges (user_id);
+            """))
+
             await conn.commit()
         logger.info("Database connection verified successfully and schema updated.")
     except Exception as e:

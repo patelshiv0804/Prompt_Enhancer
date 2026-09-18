@@ -9,6 +9,7 @@ from app.db.models import Prompt
 from app.repositories.prompt import PromptRepository
 from app.services.prompt_version_service import PromptVersionService
 from app.services.prompt_embedding_service import PromptEmbeddingService
+from app.services.activity_service import ActivityService
 from app.services.exceptions import (
     PromptPersistenceException,
     DatabaseTransactionException,
@@ -98,6 +99,26 @@ class PromptPersistenceService:
             await self.prompt_embedding_service.update_prompt_embedding(session, str(prompt_id))
             await session.flush()
 
+            # Record immutable daily activity ledger entry
+            score = None
+            if old_analysis and isinstance(old_analysis, dict):
+                val = old_analysis.get("overall_score")
+                if isinstance(val, (int, float)):
+                    score = float(val)
+            if score is None and new_analysis and isinstance(new_analysis, dict):
+                val = new_analysis.get("before_score") or new_analysis.get("overall_score")
+                if isinstance(val, (int, float)):
+                    score = float(val)
+
+            try:
+                await ActivityService.record_daily_activity(
+                    session=session,
+                    user_id=clean_user_id,
+                    score=score,
+                )
+            except Exception as act_err:
+                logger.warning("Non-fatal: failed to record daily activity ledger: %s", act_err)
+
             logger.info("Successfully created prompt id=%s and version 1", prompt_id)
             return prompt
         except Exception as exc:
@@ -130,6 +151,15 @@ class PromptPersistenceService:
             # Generate new embedding
             await self.prompt_embedding_service.update_prompt_embedding(session, prompt_id)
             await session.flush()
+
+            try:
+                if prompt.user_id:
+                    await ActivityService.record_daily_activity(
+                        session=session,
+                        user_id=prompt.user_id,
+                    )
+            except Exception as act_err:
+                logger.warning("Non-fatal: failed to record daily activity ledger on reenhance: %s", act_err)
 
             logger.info("Successfully added new version to prompt_id=%s", prompt_id)
             return prompt

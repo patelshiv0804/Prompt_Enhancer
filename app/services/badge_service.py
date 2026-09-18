@@ -15,8 +15,11 @@ class BadgeService:
         max_versions: int,
         unique_models: int,
         unique_modes: int,
+        permanently_unlocked: Optional[Dict[str, Any]] = None,
+        all_time_max_score: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
-        max_user_score = max(user_raw_scores) if user_raw_scores else 0.0
+        raw_max = max(user_raw_scores) if user_raw_scores else 0.0
+        max_user_score = max(raw_max, all_time_max_score or 0.0)
         score_80_count = sum(1 for s in user_raw_scores if s >= 80.0)
 
         badges_def = [
@@ -409,5 +412,15 @@ class BadgeService:
                 "percentage": min(100.0, round((unique_modes / 8) * 100, 1)),
             },
         ]
+
+        if permanently_unlocked:
+            for b in badges_def:
+                b_id = b["id"]
+                if b_id in permanently_unlocked:
+                    b["unlocked"] = True
+                    b["percentage"] = 100.0
+                    unlocked_dt = permanently_unlocked[b_id]
+                    if unlocked_dt:
+                        b["unlocked_at"] = unlocked_dt.isoformat() if hasattr(unlocked_dt, "isoformat") else str(unlocked_dt)
 
         return badges_def
