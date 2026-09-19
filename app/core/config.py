@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
     top_k_results: int = 5
     similarity_threshold: float = 0.05
+    general_template_match_threshold: float = 0.38
     role_match_threshold: float = 0.50
     mode_match_threshold: float = 0.50
     cache_model: bool = True

@@ -23,15 +23,11 @@ from app.services.embedding_service import EmbeddingService
 
 
 def build_template_embedding_text(template: Template) -> str:
-    tags_str = ", ".join(template.tags) if template.tags else "None"
-    return (
-        f"Role:\n{template.role or 'N/A'}\n\n"
-        f"Mode:\n{template.mode or 'N/A'}\n\n"
-        f"Category:\n{template.category or 'N/A'}\n\n"
-        f"Title:\n{template.title or 'N/A'}\n\n"
-        f"Description:\n{template.description or 'N/A'}\n\n"
-        f"Tags:\n{tags_str}"
-    )
+    role_str = template.role or "General"
+    mode_str = f" ({template.mode})" if template.mode else ""
+    desc_str = f" {template.description.strip()}" if template.description else ""
+    tags_str = f" Key focus areas: {', '.join(template.tags)}." if template.tags else ""
+    return f"{template.title} for {role_str}{mode_str}.{desc_str}{tags_str}".strip()
 
 
 async def recompute_embeddings() -> None:

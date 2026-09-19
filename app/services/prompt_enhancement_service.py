@@ -80,13 +80,9 @@ class PromptEnhancementService:
         prompt = neutralize_delimiters(prompt)
         variables = sanitize_variables(variables)
 
-        # STEP 2: Retrieve a template for a new enhancement, or use the
-        # persisted template for re-enhancement. The latter must not trigger
-        # semantic retrieval/embedding generation again.
-        #
-        # AMPE shortcut: when role is 'general'/'auto'/absent, skip template
-        # retrieval entirely — the adaptive path doesn't need a DB template.
-        _use_adaptive_early = (role or "").strip().lower() in _GENERAL_ROLES
+        # STEP 2: Template selection (explicit override, high-confidence gate, or semantic retrieval)
+        is_general_role = (role or "").strip().lower() in _GENERAL_ROLES
+        use_adaptive = is_general_role
 
         if template_override is not None:
             selected_temp = {
@@ -95,11 +91,46 @@ class PromptEnhancementService:
                 "body": template_override.body,
             }
             similarity_score = 1.0
-            _use_adaptive_early = False  # explicit template override always uses template path
-        elif _use_adaptive_early:
-            # AMPE path: no DB lookup needed.
-            selected_temp = {"id": "adaptive", "title": "Adaptive Enhancement", "body": ""}
-            similarity_score = 0.0
+            use_adaptive = False  # explicit template override always uses template path
+        elif is_general_role:
+            # High-confidence semantic gate: run fast pgvector scan (~2ms)
+            # If top match >= general_template_match_threshold, use that specialized template.
+            # Otherwise, fall back cleanly to the upgraded AMPE few-shot engine.
+            try:
+                emb = await self.retrieval_service.embedding_service.generate_for_prompt_cached(prompt)
+                candidates = await self.retrieval_service.repository.search_templates_with_vector(
+                    session=session,
+                    vector=emb,
+                    is_approved=True,
+                    limit=1,
+                )
+                if candidates and candidates[0][1] >= settings.general_template_match_threshold:
+                    top_t, top_s = candidates[0]
+                    selected_temp = {
+                        "id": str(top_t.id),
+                        "title": top_t.title,
+                        "body": top_t.body,
+                    }
+                    similarity_score = top_s
+                    use_adaptive = False
+                    logger.info(
+                        "General role matched high-confidence template %r (score=%.4f >= %.4f)",
+                        top_t.title, top_s, settings.general_template_match_threshold,
+                    )
+                else:
+                    top_score = candidates[0][1] if candidates else 0.0
+                    selected_temp = {"id": "adaptive", "title": "Adaptive Enhancement", "body": ""}
+                    similarity_score = top_score
+                    use_adaptive = True
+                    logger.info(
+                        "General role top match below threshold (score=%.4f < %.4f). Using AMPE engine.",
+                        top_score, settings.general_template_match_threshold,
+                    )
+            except Exception as exc:
+                logger.warning("General role vector scan failed (%s). Falling back to AMPE.", exc)
+                selected_temp = {"id": "adaptive", "title": "Adaptive Enhancement", "body": ""}
+                similarity_score = 0.0
+                use_adaptive = True
         else:
             retrieval_res = await self.retrieval_service.retrieve_best_template(
                 session=session,
@@ -110,14 +141,14 @@ class PromptEnhancementService:
             )
             selected_temp = retrieval_res["selected_template"]
             similarity_score = retrieval_res["similarity_score"]
+            use_adaptive = False
         template_id = selected_temp["id"]
         template_body = selected_temp["body"]
 
         # ── DUAL-PATH ROUTING ────────────────────────────────────────────────────
-        # AMPE path  : role is 'general'/'auto'/absent → skip DB template,
-        #              variable extraction, and rendering. LLM infers domain.
-        # Template path: specific role provided → existing flow unchanged.
-        use_adaptive = (role or "").strip().lower() in _GENERAL_ROLES
+        # AMPE path  : general/auto role and no high-confidence template match →
+        #              skip DB template, variable extraction, and rendering.
+        # Template path: specific role OR high-confidence template match.
 
         if use_adaptive:
             logger.info("AMPE path selected (role=%r). Skipping variable extraction.", role)
@@ -275,9 +306,9 @@ class PromptEnhancementService:
         prompt = neutralize_delimiters(prompt)
         variables = sanitize_variables(variables)
 
-        # STEP 2: Template selection (explicit override or semantic retrieval)
-        # AMPE shortcut: skip DB lookup when role is 'general'/'auto'/absent.
-        _use_adaptive_stream = (role or "").strip().lower() in _GENERAL_ROLES
+        # STEP 2: Template selection (explicit override, high-confidence gate, or semantic retrieval)
+        is_general_role_stream = (role or "").strip().lower() in _GENERAL_ROLES
+        _use_adaptive_stream = is_general_role_stream
 
         if template_override is not None:
             selected_temp = {
@@ -287,9 +318,42 @@ class PromptEnhancementService:
             }
             similarity_score = 1.0
             _use_adaptive_stream = False  # template override always uses template path
-        elif _use_adaptive_stream:
-            selected_temp = {"id": "adaptive", "title": "Adaptive Enhancement", "body": ""}
-            similarity_score = 0.0
+        elif is_general_role_stream:
+            try:
+                emb = await self.retrieval_service.embedding_service.generate_for_prompt_cached(prompt)
+                candidates = await self.retrieval_service.repository.search_templates_with_vector(
+                    session=session,
+                    vector=emb,
+                    is_approved=True,
+                    limit=1,
+                )
+                if candidates and candidates[0][1] >= settings.general_template_match_threshold:
+                    top_t, top_s = candidates[0]
+                    selected_temp = {
+                        "id": str(top_t.id),
+                        "title": top_t.title,
+                        "body": top_t.body,
+                    }
+                    similarity_score = top_s
+                    _use_adaptive_stream = False
+                    logger.info(
+                        "General role stream matched high-confidence template %r (score=%.4f >= %.4f)",
+                        top_t.title, top_s, settings.general_template_match_threshold,
+                    )
+                else:
+                    top_score = candidates[0][1] if candidates else 0.0
+                    selected_temp = {"id": "adaptive", "title": "Adaptive Enhancement", "body": ""}
+                    similarity_score = top_score
+                    _use_adaptive_stream = True
+                    logger.info(
+                        "General role stream top match below threshold (score=%.4f < %.4f). Using AMPE stream.",
+                        top_score, settings.general_template_match_threshold,
+                    )
+            except Exception as exc:
+                logger.warning("General role stream vector scan failed (%s). Falling back to AMPE stream.", exc)
+                selected_temp = {"id": "adaptive", "title": "Adaptive Enhancement", "body": ""}
+                similarity_score = 0.0
+                _use_adaptive_stream = True
         else:
             retrieval_res = await self.retrieval_service.retrieve_best_template(
                 session=session,
@@ -300,6 +364,7 @@ class PromptEnhancementService:
             )
             selected_temp = retrieval_res["selected_template"]
             similarity_score = retrieval_res["similarity_score"]
+            _use_adaptive_stream = False
         template_id = selected_temp["id"]
         template_body = selected_temp["body"]
 
